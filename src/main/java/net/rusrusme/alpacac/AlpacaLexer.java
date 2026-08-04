@@ -22,6 +22,8 @@ public final class AlpacaLexer {
         KEYWORDS.put("while", WHILE);
         KEYWORDS.put("do", DO);
         KEYWORDS.put("return", RETURN);
+        KEYWORDS.put("break", BREAK);
+        KEYWORDS.put("continue", CONTINUE);
         KEYWORDS.put("unsafe", UNSAFE);
         KEYWORDS.put("is", IS);
         KEYWORDS.put("object", OBJECT);

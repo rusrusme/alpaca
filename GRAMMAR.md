@@ -19,8 +19,12 @@ Program             ::= { TopLevelDeclaration } ;
 TopLevelDeclaration ::= [ DecoratorList ] ( ObjectDecl | FunctionDecl | VarDeclStmt ) ;
 
 DecoratorList       ::= { Decorator } ;
-Decorator           ::= "@" Identifier [ "(" DecoratorArgs ")" ] ;
-DecoratorArgs       ::= Expression { "," Expression } ;
+Decorator           ::= GenericDecorator | PureDecorator
+                      | DocsDecorator | ConstDecorator ;
+GenericDecorator    ::= "@generic" "(" TypeList ")" ;
+PureDecorator       ::= "@pure" ;
+DocsDecorator       ::= "@docs" "(" StringLiteral ")" ;
+ConstDecorator      ::= "@const" ;
 ```
 
 ---
@@ -89,7 +93,9 @@ Statement           ::= BlockStmt
                       | WhileStmt
                       | DoWhileStmt
                       | ReturnStmt
-                      | UnsafeStmt ;
+                      | UnsafeStmt
+                      | BreakStmt
+                      | ContinueStmt ;
 
 BlockStmt           ::= "{" { Statement } "}" ;
 
@@ -110,6 +116,10 @@ DoWhileStmt         ::= "do" ( ":" Statement | BlockStmt ) "while" Expression ";
 ReturnStmt          ::= "return" [ Expression ] ";" ;
 
 UnsafeStmt          ::= "unsafe" BlockStmt ;
+
+BreakStmt           ::= "break" ";" ;
+
+ContinueStmt        ::= "continue" ";" ;
 
 ExpressionStmt      ::= Expression ";" ;
 ```
@@ -142,6 +152,7 @@ PrimaryExpr         ::= BaseExpr { PostfixSuffix } ;
 BaseExpr            ::= Literal
                       | Identifier
                       | TupleLiteral
+                      | ArrayLiteral
                       | "(" Expression ")" ;
 
 PostfixSuffix       ::= MemberAccess | CallExpr | PostfixOp ;
@@ -152,6 +163,8 @@ PostfixOp           ::= "++" | "--" ;
 ArgumentList        ::= Expression { "," Expression } ;
 
 TupleLiteral        ::= "(" Expression "," Expression { "," Expression } ")" ;
+
+ArrayLiteral        ::= "{" [ Expression { "," Expression } ] "}" ;
 ```
 
 ---

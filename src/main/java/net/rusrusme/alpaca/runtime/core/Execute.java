@@ -69,6 +69,8 @@ public final class Execute {
                     mergedDeclarations
             );
 
+            System.out.println(programWithDeps);
+
 //            monomorphizer = new LamaMonomorphizer();
 //            concreteDeclarations = monomorphizer.process(declarations);
 

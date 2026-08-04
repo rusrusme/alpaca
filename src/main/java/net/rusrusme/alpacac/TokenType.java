@@ -11,6 +11,7 @@ public enum TokenType {
     AT, // `@`
     IS,
     RETURN,
+    BREAK, CONTINUE,
     PUBLIC, PRIVATE,
     IMPORT,
 

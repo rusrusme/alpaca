@@ -12,6 +12,7 @@ import java.util.Optional;
 public final class SyntaxTree {
     /**
      * Program represents the root of the syntax tree, containing the program's name, imports, and top-level declarations.
+     *
      * @param name
      * @param imports
      * @param declarations
@@ -24,6 +25,7 @@ public final class SyntaxTree {
 
     /**
      * Import represents an import statement in the syntax tree, specifying the path of the imported module or file.
+     *
      * @param path
      */
     public record Import(String path) implements Node {}
@@ -46,24 +48,47 @@ public final class SyntaxTree {
             StatementDeclaration {}
 
     /**
-     * Decorators are metadata annotations that can be attached to declarations, providing additional information or behavior.
-     *
-     * @param name
-     * @param args
+     * Decorators are metadata annotations that can be attached to declarations.
+     * The set of decorators is closed and small; each decorator is modeled as its own node
+     * so that later phases can dispatch exhaustively via pattern matching.
      */
-    public record Decorator(String name, List<DecoratorArg> args) implements Node {}
+    public sealed interface Decorator extends Node permits
+            ConstDecorator,
+            DocsDecorator,
+            GenericDecorator,
+            MainDecorator,
+            PureDecorator {}
 
-    public sealed interface DecoratorArg extends Node permits ValueArg, TypeArg {}
+    /**
+     * @param typeParams The declared type parameter names.
+     * @generic(T, U) declares the type parameters of a generic function or object.
+     */
+    public record GenericDecorator(List<Type> typeParams) implements Decorator {}
 
-    public record ValueArg(Expression expression) implements DecoratorArg {}
+    /**
+     * @pure marks a function as free of side effects.
+     */
+    public record PureDecorator() implements Decorator {}
 
-    public record TypeArg(Type type) implements DecoratorArg {}
+    /**
+     * @param documentation The documentation text.
+     * @docs("...") attaches documentation to a declaration.
+     */
+    public record DocsDecorator(String documentation) implements Decorator {}
+
+    /**
+     * @const marks a value as compile-time constant.
+     */
+    public record ConstDecorator() implements Decorator {}
+
+    public record MainDecorator() implements Decorator {}
 
     // -----------------------------------------------------------------------------------------------------------------
 
     public record Parameter(Type type, String name) implements Node {}
 
-    public record Field(List<Decorator> decorators, Type type, String name, Visibility visibility) implements Node {}
+    public record Field(List<Decorator> decorators, Type type, String name, Optional<Expression> initializer,
+                        Visibility visibility) implements Node {}
 
     // -----------------------------------------------------------------------------------------------------------------
 
@@ -127,7 +152,14 @@ public final class SyntaxTree {
 
     public record SwitchStatement(Expression selector, List<SwitchCase> cases) implements Statement {}
 
-    public record SwitchCase(List<Expression> labels, List<Statement> statements) implements Node {}
+    /**
+     * A single case of a switch statement, matching GRAMMAR.md:
+     * {@code SwitchCase ::= "case" Expression [ "->" ] ( Statement | BlockStmt )}.
+     *
+     * @param label The case expression; {@code null} for the {@code default} case.
+     * @param body  The statement executed when the case matches.
+     */
+    public record SwitchCase(Expression label, Statement body) implements Node {}
 
     /**
      * Simple statements are basic actions that can be executed,
@@ -182,7 +214,8 @@ public final class SyntaxTree {
             ArrayLiteral,
             MemberAccess,
             IsExpression,
-            IndexAccess {}
+            IndexAccess,
+            PostfixOp {}
 
     /**
      * Literals represent constant values in the code, such as integers, floats, booleans, characters, and strings.
@@ -229,6 +262,14 @@ public final class SyntaxTree {
     public record MemberAccess(Expression object, String member) implements Expression {}
 
     public record IndexAccess(Expression array, Expression index) implements Expression {}
+
+    /**
+     * PostfixOp represents a postfix increment or decrement, e.g. {@code x++} or {@code x--}.
+     *
+     * @param operator The postfix operator ("++" or "--").
+     * @param operand  The expression being incremented or decremented.
+     */
+    public record PostfixOp(String operator, Expression operand) implements Expression {}
 
     /**
      * Types represent the data types of variables, function return values, and other expressions.

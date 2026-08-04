@@ -2,6 +2,7 @@ package net.rusrusme.alpacac;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static net.rusrusme.alpacac.SyntaxTree.*;
 import static net.rusrusme.alpacac.TokenType.*;
@@ -28,9 +29,10 @@ public final class AlpacaParser {
         List<Declaration> declarations = new ArrayList<>();
 
         while (!isAtEnd()) {
-            if (match(TokenType.IMPORT)) { // Example import check
+            if (match(IMPORT)) { // Example import check
                 imports.add(parseImport());
-            } else {
+            }
+            else {
                 declarations.add(parseDeclaration());
             }
         }
@@ -39,48 +41,708 @@ public final class AlpacaParser {
     }
 
     // --------------------------------------------------------------------------
+    // DECLARATIONS
+    // --------------------------------------------------------------------------
 
     private Import parseImport() {
         StringBuilder path = new StringBuilder();
 
-        // Parse first identifier (e.g., "lama")
-        Token first = consume(TokenType.IDENTIFIER, "Expected package or module name after 'import'");
+        // Parse first identifier (e.g., "alpaca")
+        Token first = consume(IDENTIFIER, "expected package or module name after 'import'");
         path.append(first.lexeme());
 
         // Parse subsequent .identifier segments (e.g., ".lib.Array")
-        while (match(TokenType.DOT)) {
-            Token segment = consume(TokenType.IDENTIFIER, "Expected identifier after '.'");
+        while (match(DOT)) {
+            Token segment = consume(IDENTIFIER, "expected identifier after '.'");
             path.append(".").append(segment.lexeme());
         }
 
-        match(TokenType.SEMICOLON); // Consume optional or required trailing semicolon
+        match(SEMICOLON); // Consume optional or required trailing semicolon
 
-        // Returns Import("lama.lib.Array")
+        // Returns Import("alpaca.lib.Array")
         return new Import(path.toString());
     }
 
-    // TODO
     private Declaration parseDeclaration() {
-        // Dispatch to parseFunctionDeclaration, parseObjectDeclaration, etc.
         List<Decorator> decorators = parseDecorators();
+        Visibility visibility = parseVisibility();
+
         if (match(OBJECT)) {
-            Token objectName = consume(IDENTIFIER, "expected object name");
-            consume(LBRACE, "expected '{' after object name");
+            return parseObjectDeclaration(decorators, visibility);
         }
-        return null;
+        if (isFunctionDeclaration()) {
+            return parseFunctionDeclaration(decorators, visibility);
+        }
+        if (isVariableDeclaration()) {
+            return parseGlobalVariable(decorators, visibility);
+        }
+        throw syntaxError(peek(), "expected a top-level declaration (object, function or global variable)");
     }
+
+    private ObjectDeclaration parseObjectDeclaration(List<Decorator> decorators, Visibility visibility) {
+        Token objectName = consume(IDENTIFIER, "expected object name after 'object'");
+        consume(LBRACE, "expected '{' after object name");
+
+        List<Field> fields = new ArrayList<>();
+        List<FunctionDeclaration> methods = new ArrayList<>();
+
+        while (!check(RBRACE) && !isAtEnd()) {
+            List<Decorator> memberDecorators = parseDecorators();
+            Visibility memberVisibility = parseVisibility();
+            if (isFunctionDeclaration()) {
+                methods.add(parseFunctionDeclaration(memberDecorators, memberVisibility));
+            }
+            else {
+                fields.add(parseField(memberDecorators, memberVisibility));
+            }
+        }
+        consume(RBRACE, "expected '}' after object body");
+        return new ObjectDeclaration(decorators, objectName.lexeme(), fields, methods, visibility);
+    }
+
+    private Field parseField(List<Decorator> decorators, Visibility visibility) {
+        Type type = parseType();
+        Token name = consume(IDENTIFIER, "expected field name");
+        Optional<Expression> initializer = Optional.empty();
+        if (match(EQUALS)) {
+            initializer = Optional.of(parseExpression());
+        }
+        consume(SEMICOLON, "expected ';' after field declaration");
+        return new Field(decorators, type, name.lexeme(), initializer, visibility);
+    }
+
+    private FunctionDeclaration parseFunctionDeclaration(List<Decorator> decorators, Visibility visibility) {
+        Type returnType = parseType();
+        Token name = consume(IDENTIFIER, "expected function name");
+        consume(LPAR, "expected '(' after function name");
+
+        List<Parameter> parameters = new ArrayList<>();
+        if (!check(RPAR)) {
+            do {
+                Type paramType = parseType();
+                Token paramName = consume(IDENTIFIER, "expected parameter name");
+                parameters.add(new Parameter(paramType, paramName.lexeme()));
+            }
+            while (match(COMMA));
+        }
+        consume(RPAR, "expected ')' after parameters");
+        consume(LBRACE, "expected '{' before function body");
+        Block body = new Block(parseBlock());
+
+        return new FunctionDeclaration(decorators, returnType, name.lexeme(), parameters, Optional.of(body), visibility);
+    }
+
+    private GlobalVariable parseGlobalVariable(List<Decorator> decorators, Visibility visibility) {
+        Type type = parseType();
+        Token name = consume(IDENTIFIER, "expected variable name");
+        Optional<Expression> initializer = Optional.empty();
+        if (match(EQUALS)) {
+            initializer = Optional.of(parseExpression());
+        }
+        consume(SEMICOLON, "expected ';' after global variable declaration");
+        return new GlobalVariable(decorators, type, name.lexeme(), initializer, visibility);
+    }
+
+    private Visibility parseVisibility() {
+        if (match(PUBLIC)) return Visibility.PUBLIC;
+        if (match(PRIVATE)) return Visibility.PRIVATE;
+        return Visibility.PRIVATE;
+    }
+
+    // --------------------------------------------------------------------------
+    // DECORATORS
+    // --------------------------------------------------------------------------
 
     private List<Decorator> parseDecorators() {
         List<Decorator> decorators = new ArrayList<>();
         while (match(AT)) {
-            Token identifierName = consume(IDENTIFIER, "expected decorator name after '@'");
-
-            if (match(LPAR)) {
-                consume(RPAR, "expected ')' after decorator argument");
-            }
-            decorators.add(new Decorator(identifierName.lexeme(), List.of()));
+            decorators.add(parseDecorator());
         }
         return decorators;
+    }
+
+    private Decorator parseDecorator() {
+        Token name = consume(IDENTIFIER, "expected decorator name after '@'");
+        return switch (name.lexeme()) {
+            case "generic" -> {
+                consume(LPAR, "expected '(' after '@generic'");
+                List<Type> typeParams = parseTypeList();
+                consume(RPAR, "expected ')' after generic type parameter list");
+                yield new GenericDecorator(typeParams);
+            }
+            case "pure" -> {
+                rejectArguments(name, "@pure");
+                yield new PureDecorator();
+            }
+            case "docs" -> {
+                consume(LPAR, "expected '(' after '@docs'");
+                Token doc = consume(STRING_LITERAL, "expected a string literal in '@docs'");
+                consume(RPAR, "expected ')' after documentation string");
+                // Use the parsed literal value, not the raw lexeme (which still contains the quotes).
+                yield new DocsDecorator((String) doc.literal());
+            }
+            case "const" -> {
+                rejectArguments(name, "@const");
+                yield new ConstDecorator();
+            }
+            case "main" -> {
+                rejectArguments(name, "@main");
+                yield new MainDecorator();
+            }
+            default -> throw syntaxError(name, "unknown decorator '@" + name.lexeme() + "'");
+        };
+    }
+
+    private void rejectArguments(Token name, String decorator) {
+        if (match(LPAR)) {
+            throw syntaxError(name, "'" + decorator + "' takes no arguments");
+        }
+    }
+
+    // --------------------------------------------------------------------------
+    // STATEMENTS
+    // --------------------------------------------------------------------------
+
+    private Statement parseStatement() {
+        if (match(LBRACE)) return new Block(parseBlock());
+        if (match(IF)) return parseIfStatement();
+        if (match(SWITCH)) return parseSwitchStatement();
+        if (match(FOR)) return parseForStatement();
+        if (match(WHILE)) return parseWhileStatement();
+        if (match(DO)) return parseDoWhileStatement();
+        return parseSimpleStatement();
+    }
+
+    private List<Statement> parseBlock() {
+        List<Statement> statements = new ArrayList<>();
+        while (!check(RBRACE) && !isAtEnd()) {
+            statements.add(parseStatement());
+        }
+        consume(RBRACE, "expected '}' after block");
+        return statements;
+    }
+
+    /**
+     * Parses a branch: either a block "{ ... }" or ": Statement" (GRAMMAR.md).
+     */
+    private Statement parseBranch() {
+        if (match(LBRACE)) return new Block(parseBlock());
+        consume(COLON, "expected ':' or '{' before statement");
+        return parseStatement();
+    }
+
+    private IfStatement parseIfStatement() {
+        Expression condition = parseExpression();
+        Statement thenBranch = parseBranch();
+        Statement elseBranch = null;
+        if (match(ELSE)) {
+            if (match(IF)) {
+                elseBranch = parseIfStatement();
+            }
+            else {
+                elseBranch = parseBranch();
+            }
+        }
+        return new IfStatement(condition, thenBranch, Optional.ofNullable(elseBranch));
+    }
+
+    private SwitchStatement parseSwitchStatement() {
+        Expression selector = parseExpression();
+        consume(LBRACE, "expected '{' after switch expression");
+
+        List<SwitchCase> cases = new ArrayList<>();
+        while (!check(RBRACE) && !isAtEnd()) {
+            Expression label;
+            if (match(CASE)) {
+                label = parseExpression();
+            }
+            else if (match(DEFAULT)) {
+                label = null; // default case
+            }
+            else {
+                throw syntaxError(peek(), "expected 'case' or 'default' in switch");
+            }
+            match(ARROW); // optional "->"
+            cases.add(new SwitchCase(label, parseCaseBody()));
+        }
+        consume(RBRACE, "expected '}' after switch");
+        return new SwitchStatement(selector, cases);
+    }
+
+    private Statement parseCaseBody() {
+        if (match(LBRACE)) return new Block(parseBlock());
+        return parseStatement();
+    }
+
+    private ForStatement parseForStatement() {
+        Optional<SimpleStatement> init = Optional.empty();
+        if (!check(COLON)) {
+            init = Optional.of(parseForInit());
+        }
+        consume(COLON, "expected ':' after for-init");
+
+        Optional<Expression> condition = Optional.empty();
+        if (!check(COLON)) {
+            condition = Optional.of(parseExpression());
+        }
+        consume(COLON, "expected ':' after for-condition");
+
+        Optional<SimpleStatement> update = Optional.empty();
+        if (!check(COLON) && !check(LBRACE)) {
+            update = Optional.of(parseExpressionOrAssignment());
+        }
+        Statement body = parseBranch();
+        return new ForStatement(init, condition, update, body);
+    }
+
+    private SimpleStatement parseForInit() {
+        if (isVariableDeclaration()) {
+            return parseLocalVariable();
+        }
+        return parseExpressionOrAssignment();
+    }
+
+    private WhileStatement parseWhileStatement() {
+        Expression condition = parseExpression();
+        Statement body = parseBranch();
+        return new WhileStatement(condition, body);
+    }
+
+    private DoWhileStatement parseDoWhileStatement() {
+        Statement body = parseBranch();
+        consume(WHILE, "expected 'while' after do-body");
+        Expression condition = parseExpression();
+        consume(SEMICOLON, "expected ';' after do-while");
+        return new DoWhileStatement(body, condition);
+    }
+
+    private SimpleStatement parseSimpleStatement() {
+        if (match(UNSAFE)) {
+            return parseUnsafeStatement();
+        }
+        if (match(RETURN)) {
+            return parseReturnStatement();
+        }
+        if (match(BREAK)) {
+            consume(SEMICOLON, "expected ';' after 'break'");
+            return new BreakStatement();
+        }
+        if (match(CONTINUE)) {
+            consume(SEMICOLON, "expected ';' after 'continue'");
+            return new ContinueStatement();
+        }
+
+        SimpleStatement statement;
+        if (isVariableDeclaration()) {
+            statement = parseLocalVariable();
+        }
+        else {
+            statement = parseExpressionOrAssignment();
+        }
+        consume(SEMICOLON, "expected ';' after statement");
+        return statement;
+    }
+
+    private ReturnStatement parseReturnStatement() {
+        Expression value = null;
+        if (!check(SEMICOLON) && !check(RBRACE) && !isAtEnd()) {
+            value = parseExpression();
+        }
+        consume(SEMICOLON, "expected ';' after return");
+        return new ReturnStatement(Optional.ofNullable(value));
+    }
+
+    private LocalVariable parseLocalVariable() {
+        Type type = parseType();
+        Token name = consume(IDENTIFIER, "expected variable name");
+        Optional<Expression> initializer = Optional.empty();
+        if (match(EQUALS)) {
+            initializer = Optional.of(parseExpression());
+        }
+        return new LocalVariable(type, name.lexeme(), initializer);
+    }
+
+    private SimpleStatement parseExpressionOrAssignment() {
+        Expression expression = parseExpression();
+        if (match(EQUALS)) {
+            Expression value = parseExpression();
+            return new Assignment(expression, value);
+        }
+        return new ExpressionStatement(expression);
+    }
+
+    /**
+     * Parses an unsafe statement, which is a block of raw C code enclosed in braces '{' and '}'.
+     */
+    private UnsafeStatement parseUnsafeStatement() {
+        consume(LBRACE, "expected '{' after 'unsafe'");
+        StringBuilder rawC = new StringBuilder();
+        int depth = 1;
+        Token previous = null;
+        while (depth > 0 && !isAtEnd()) {
+            Token t = peek();
+            if (t.type() == LBRACE) {
+                depth++;
+            }
+            else if (t.type() == RBRACE) {
+                depth--;
+                if (depth == 0) break; // Reached closing '}' for unsafe
+            }
+            // Reconstruct original whitespace between tokens (the lexer discards it)
+            if (previous != null) {
+                if (t.line() > previous.line()) {
+                    rawC.repeat("\n", t.line() - previous.line());
+                    rawC.repeat(" ", Math.max(0, t.column() - 1));
+                }
+                else {
+                    int gap = t.column() - (previous.column() + previous.lexeme().length());
+                    rawC.repeat(" ", Math.max(0, gap));
+                }
+            }
+            rawC.append(t.lexeme());
+            previous = t;
+            advance();
+        }
+        consume(RBRACE, "expected closing '}' for unsafe");
+        return new UnsafeStatement(rawC.toString().trim());
+    }
+
+    // --------------------------------------------------------------------------
+    // EXPRESSIONS
+    // --------------------------------------------------------------------------
+
+    private Expression parseExpression() {
+        return parseLogicalOr();
+    }
+
+    private Expression parseLogicalOr() {
+        Expression expression = parseLogicalAnd();
+        while (match(OR_OR)) {
+            String operator = previous().lexeme();
+            Expression right = parseLogicalAnd();
+            expression = new BinaryOp(expression, operator, right);
+        }
+        return expression;
+    }
+
+    private Expression parseLogicalAnd() {
+        Expression expression = parseIsCheck();
+        while (match(AND_AND)) {
+            String operator = previous().lexeme();
+            Expression right = parseIsCheck();
+            expression = new BinaryOp(expression, operator, right);
+        }
+        return expression;
+    }
+
+    private Expression parseIsCheck() {
+        Expression expression = parseEquality();
+        if (match(IS)) {
+            return new IsExpression(expression, parseType());
+        }
+        return expression;
+    }
+
+    private Expression parseEquality() {
+        Expression expression = parseRelational();
+        while (match(EQUALS_EQUALS, BANG_EQUALS)) {
+            String operator = previous().lexeme();
+            Expression right = parseRelational();
+            expression = new BinaryOp(expression, operator, right);
+        }
+        return expression;
+    }
+
+    private Expression parseRelational() {
+        Expression expression = parseAdditive();
+        while (match(LESS, LESS_EQUALS, GREATER, GREATER_EQUALS)) {
+            String operator = previous().lexeme();
+            Expression right = parseAdditive();
+            expression = new BinaryOp(expression, operator, right);
+        }
+        return expression;
+    }
+
+    private Expression parseAdditive() {
+        Expression expression = parseMultiplicative();
+        while (match(PLUS, MINUS)) {
+            String operator = previous().lexeme();
+            Expression right = parseMultiplicative();
+            expression = new BinaryOp(expression, operator, right);
+        }
+        return expression;
+    }
+
+    private Expression parseMultiplicative() {
+        Expression expression = parseUnary();
+        while (match(STAR, SLASH, PERCENT)) {
+            String operator = previous().lexeme();
+            Expression right = parseUnary();
+            expression = new BinaryOp(expression, operator, right);
+        }
+        return expression;
+    }
+
+    private Expression parseUnary() {
+        if (match(BANG, MINUS, PLUS_PLUS, MINUS_MINUS)) {
+            String operator = previous().lexeme();
+            Expression operand = parseUnary();
+            return new UnaryOp(operator, operand);
+        }
+        return parsePostfix();
+    }
+
+    private Expression parsePostfix() {
+        Expression expression = parsePrimary();
+        while (true) {
+            if (match(LPAR)) {
+                // Function call: expr "(" (expr ("," expr)*)? ")"
+                List<Expression> args = new ArrayList<>();
+                if (!check(RPAR)) {
+                    do {
+                        args.add(parseExpression());
+                    }
+                    while (match(COMMA));
+                }
+                consume(RPAR, "expected ')' after function arguments");
+                expression = new FunctionCall(expression, args);
+            }
+            else if (match(DOT)) {
+                // Member access: expr "." IDENTIFIER
+                Token name = consume(IDENTIFIER, "expected member name after '.'");
+                expression = new MemberAccess(expression, name.lexeme());
+            }
+            else if (match(LBRACKET)) {
+                // Index access: expr "[" expr "]"
+                Expression index = parseExpression();
+                consume(RBRACKET, "expected ']' after index");
+                expression = new IndexAccess(expression, index);
+            }
+            else if (match(PLUS_PLUS, MINUS_MINUS)) {
+                // Postfix increment/decrement: expr "++" | expr "--"
+                expression = new PostfixOp(previous().lexeme(), expression);
+            }
+            else {
+                break;
+            }
+        }
+        return expression;
+    }
+
+    private Expression parsePrimary() {
+        if (match(INT_LITERAL)) {
+            return new IntLiteral(((Number) previous().literal()).longValue());
+        }
+        if (match(FLOAT_LITERAL)) {
+            return new FloatLiteral(((Number) previous().literal()).doubleValue());
+        }
+        if (match(BOOL_LITERAL)) {
+            return new BoolLiteral((boolean) previous().literal());
+        }
+        if (match(CHAR_LITERAL)) {
+            return new CharLiteral((char) previous().literal());
+        }
+        if (match(STRING_LITERAL)) {
+            return new StringLiteral((String) previous().literal());
+        }
+        if (match(IDENTIFIER)) {
+            return new Identifier(previous().lexeme());
+        }
+        // Array literal: "{" (Expression ("," Expression)*)? "}"
+        if (match(LBRACE)) {
+            List<Expression> elements = new ArrayList<>();
+            if (!check(RBRACE)) {
+                do {
+                    elements.add(parseExpression());
+                }
+                while (match(COMMA));
+            }
+            consume(RBRACE, "expected '}' after array literal");
+            return new ArrayLiteral(elements);
+        }
+        // Tuple or grouping: "(" Expression ... ")"
+        if (match(LPAR)) {
+            Expression first = parseExpression();
+            if (match(COMMA)) {
+                List<Expression> elements = new ArrayList<>();
+                elements.add(first);
+                do {
+                    elements.add(parseExpression());
+                }
+                while (match(COMMA));
+                consume(RPAR, "expected ')' after tuple");
+                return new TupleExpression(elements);
+            }
+            consume(RPAR, "expected ')' after expression");
+            return first;
+        }
+        Token t = peek();
+        throw syntaxError(t, "expected expression, found '" + t.lexeme() + "'");
+    }
+
+    // --------------------------------------------------------------------------
+    // TYPES
+    // --------------------------------------------------------------------------
+
+    /**
+     * Parses a type: tuple types, primitive types, named types, generic instantiations and array types.
+     */
+    private Type parseType() {
+        Type type = parseBaseType();
+        while (match(LBRACKET)) {
+            consume(RBRACKET, "expected ']' after '[' in array type");
+            type = new ArrayType(type);
+        }
+        return type;
+    }
+
+    private Type parseBaseType() {
+        // Tuple type: "(" Type "," Type { "," Type } ")" - at least two elements
+        if (match(LPAR)) {
+            List<Type> elements = new ArrayList<>();
+            elements.add(parseType());
+            consume(COMMA, "expected ',' in tuple type");
+            do {
+                elements.add(parseType());
+            }
+            while (match(COMMA));
+            consume(RPAR, "expected ')' after tuple type");
+            return new TupleType(elements);
+        }
+        if (match(VOID, INT, LONG, FLOAT, DOUBLE, STRING, CHAR, BOOL)) {
+            return new NamedType(previous().lexeme());
+        }
+        if (match(UNSIGNED)) {
+            if (match(INT, LONG)) {
+                return new NamedType("unsigned " + previous().lexeme());
+            }
+            Token t = peek();
+            throw syntaxError(t, "expected 'int' or 'long' after 'unsigned' (found '" + t.lexeme() + "')");
+        }
+        Token name = consume(IDENTIFIER, "expected a type name");
+        if (match(LESS)) {
+            List<Type> args = new ArrayList<>();
+            do {
+                args.add(parseType());
+            }
+            while (match(COMMA));
+            consume(GREATER, "expected '>' after generic type arguments");
+            return new GenericType(name.lexeme(), args);
+        }
+        return new NamedType(name.lexeme());
+    }
+
+    private List<Type> parseTypeList() {
+        List<Type> types = new ArrayList<>();
+        do {
+            types.add(parseType());
+        }
+        while (match(COMMA));
+        return types;
+    }
+
+    // --------------------------------------------------------------------------
+    // LOOKAHEAD
+    // --------------------------------------------------------------------------
+
+    private boolean isTypeStart() {
+        return switch (peek().type()) {
+            case VOID, INT, LONG, FLOAT, DOUBLE, STRING, CHAR, BOOL, UNSIGNED, IDENTIFIER, LPAR -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Returns the number of tokens the type starting at {@code current} spans,
+     * including generic type arguments and array brackets.
+     */
+    private int typeLength() {
+        TokenType first = peek().type();
+        if (first == UNSIGNED) {
+            return 2; // "unsigned int" / "unsigned long"
+        }
+        if (first == LPAR) {
+            // Tuple type: "(" Type "," Type { "," Type } ")" - skip balanced parens
+            int depth = 0;
+            int i = current;
+            while (i < tokens.size()) {
+                TokenType t = tokens.get(i).type();
+                if (t == LPAR) {
+                    depth++;
+                }
+                else if (t == RPAR) {
+                    depth--;
+                    i++;
+                    if (depth == 0) break;
+                    continue;
+                }
+                i++;
+            }
+            return i - current;
+        }
+        int len = 1;
+        if (first == IDENTIFIER && current + 1 < tokens.size() && tokens.get(current + 1).type() == LESS) {
+            len = skipGenericTypeArgs(current + 1) - current;
+        }
+        // Skip bracket pairs for array types (e.g. int[])
+        int i = current + len;
+        while (i + 1 < tokens.size() && tokens.get(i).type() == LBRACKET && tokens.get(i + 1).type() == RBRACKET) {
+            i += 2;
+        }
+        return i - current;
+    }
+
+    /**
+     * Determines if the current token sequence represents a variable declaration.
+     *
+     * @return True if it is a variable declaration, false otherwise.
+     */
+    private boolean isVariableDeclaration() {
+        if (!isTypeStart()) return false;
+        int offset = typeLength();
+        return current + offset < tokens.size() && tokens.get(current + offset).type() == IDENTIFIER;
+    }
+
+    /**
+     * Determines if the current token sequence represents a function declaration.
+     *
+     * @return True if it is a function declaration, false otherwise.
+     */
+    private boolean isFunctionDeclaration() {
+        if (!isTypeStart()) return false;
+        int offset = typeLength();
+        // Check if followed by function name and '('
+        return current + offset + 1 < tokens.size()
+                && tokens.get(current + offset).type() == IDENTIFIER
+                && tokens.get(current + offset + 1).type() == LPAR;
+    }
+
+    /**
+     * Skips generic type arguments starting at the token at position {@code idx}
+     * when a '{@code <}' is found there. Counts nesting depth so that nested
+     * generics like {@code Array<Array<int>>} are skipped correctly.
+     *
+     * @param idx Absolute token position (may point beyond {@code current}).
+     * @return The index right after the closing '{@code >}' - or {@code idx},
+     *         if there is no '{@code <}' at {@code idx}.
+     */
+    private int skipGenericTypeArgs(int idx) {
+        if (idx >= tokens.size() || tokens.get(idx).type() != LESS) return idx;
+        int depth = 0;
+        while (idx < tokens.size()) {
+            TokenType type = tokens.get(idx).type();
+            if (type == LESS) {
+                depth++;
+            }
+            else if (type == GREATER) {
+                depth--;
+                idx++;
+                if (depth == 0) return idx;
+                continue;
+            }
+            idx++;
+        }
+        return idx;
     }
 
     // ----------------------------- HELPER METHODS -----------------------------
@@ -110,16 +772,6 @@ public final class AlpacaParser {
     private boolean check(TokenType type) {
         if (isAtEnd()) return false;
         return peek().type() == type;
-    }
-
-    private boolean checkSecond(TokenType type) {
-        if (current + 1 >= tokens.size()) return false;
-        return tokens.get(current + 1).type() == type;
-    }
-
-    private boolean checkThird(TokenType type) {
-        if (current + 2 >= tokens.size()) return false;
-        return tokens.get(current + 2).type() == type;
     }
 
     /**
@@ -170,5 +822,10 @@ public final class AlpacaParser {
      */
     private boolean isAtEnd() {
         return peek().type() == EOF;
+    }
+
+    private AlpacaCompilerError syntaxError(Token token, String message) {
+        return new AlpacaCompilerError("syntax error at line " + token.line() + ":" + token.column()
+                + " - " + message);
     }
 }
