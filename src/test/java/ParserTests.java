@@ -5,7 +5,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Optional;
 
 import static net.rusrusme.alpacac.SyntaxTree.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,7 +16,7 @@ class ParserTests {
     }
 
     private ObjectDeclaration parseObject(String src) {
-        return (ObjectDeclaration) parse(src).declarations().get(0);
+        return (ObjectDeclaration) parse(src).declarations().getFirst();
     }
 
     // ============================================================
@@ -36,7 +35,7 @@ class ParserTests {
                 """);
         List<Decorator> decorators = decl.decorators();
         assertEquals(4, decorators.size());
-        assertInstanceOf(GenericDecorator.class, decorators.get(0));
+        assertInstanceOf(GenericDecorator.class, decorators.getFirst());
         assertInstanceOf(PureDecorator.class, decorators.get(1));
         assertInstanceOf(DocsDecorator.class, decorators.get(2));
         assertInstanceOf(ConstDecorator.class, decorators.get(3));
@@ -46,7 +45,7 @@ class ParserTests {
     @DisplayName("@generic captures type parameters as NamedType")
     void testGenericDecorator() {
         ObjectDeclaration decl = parseObject("@generic(T, U) object House {}");
-        GenericDecorator decorator = (GenericDecorator) decl.decorators().get(0);
+        GenericDecorator decorator = (GenericDecorator) decl.decorators().getFirst();
         assertEquals(List.of(new NamedType("T"), new NamedType("U")), decorator.typeParams());
     }
 
@@ -54,7 +53,7 @@ class ParserTests {
     @DisplayName("@docs stores the unquoted string literal")
     void testDocsDecorator() {
         ObjectDeclaration decl = parseObject("@docs(\"A house object\") object House {}");
-        DocsDecorator decorator = (DocsDecorator) decl.decorators().get(0);
+        DocsDecorator decorator = (DocsDecorator) decl.decorators().getFirst();
         assertEquals("A house object", decorator.documentation());
     }
 
@@ -62,7 +61,7 @@ class ParserTests {
     @DisplayName("@docs resolves escape sequences via the token literal")
     void testDocsDecoratorEscapes() {
         ObjectDeclaration decl = parseObject("@docs(\"line\\nbreak\") object House {}");
-        DocsDecorator decorator = (DocsDecorator) decl.decorators().get(0);
+        DocsDecorator decorator = (DocsDecorator) decl.decorators().getFirst();
         assertEquals("line\nbreak", decorator.documentation());
     }
 
@@ -120,7 +119,7 @@ class ParserTests {
     @DisplayName("@generic accepts primitive types incl. unsigned long")
     void testGenericPrimitive() {
         ObjectDeclaration decl = parseObject("@generic(int, unsigned long) object A {}");
-        GenericDecorator decorator = (GenericDecorator) decl.decorators().get(0);
+        GenericDecorator decorator = (GenericDecorator) decl.decorators().getFirst();
         assertEquals(List.of(new NamedType("int"), new NamedType("unsigned long")), decorator.typeParams());
     }
 
@@ -128,7 +127,7 @@ class ParserTests {
     @DisplayName("@generic accepts array types")
     void testGenericArray() {
         ObjectDeclaration decl = parseObject("@generic(int[]) object A {}");
-        GenericDecorator decorator = (GenericDecorator) decl.decorators().get(0);
+        GenericDecorator decorator = (GenericDecorator) decl.decorators().getFirst();
         assertEquals(List.of(new ArrayType(new NamedType("int"))), decorator.typeParams());
     }
 
@@ -144,12 +143,12 @@ class ParserTests {
                     return a + b;
                 }
                 """);
-        FunctionDeclaration fn = (FunctionDeclaration) program.declarations().get(0);
+        FunctionDeclaration fn = (FunctionDeclaration) program.declarations().getFirst();
         assertEquals(new NamedType("int"), fn.returnType());
         assertEquals("add", fn.name());
         assertEquals(List.of(new Parameter(new NamedType("int"), "a"), new Parameter(new NamedType("int"), "b")), fn.parameters());
         assertTrue(fn.body().isPresent());
-        ReturnStatement ret = (ReturnStatement) fn.body().get().statements().get(0);
+        ReturnStatement ret = (ReturnStatement) fn.body().get().statements().getFirst();
         assertEquals(new BinaryOp(new Identifier("a"), "+", new Identifier("b")), ret.value().orElseThrow());
     }
 
@@ -158,7 +157,7 @@ class ParserTests {
     void testExampleProgram() {
         String src = """
                 import lama.lib.SysOut;
-
+                
                 @generic(T)
                 void println(T t) {
                     unsafe {
@@ -168,15 +167,15 @@ class ParserTests {
                 """;
         Program program = parse(src);
         assertEquals(1, program.imports().size());
-        assertEquals("lama.lib.SysOut", program.imports().get(0).path());
+        assertEquals("lama.lib.SysOut", program.imports().getFirst().path());
 
-        FunctionDeclaration fn = (FunctionDeclaration) program.declarations().get(0);
+        FunctionDeclaration fn = (FunctionDeclaration) program.declarations().getFirst();
         assertEquals("println", fn.name());
         assertEquals(new NamedType("void"), fn.returnType());
-        assertInstanceOf(GenericDecorator.class, fn.decorators().get(0));
-        assertEquals(new Parameter(new NamedType("T"), "t"), fn.parameters().get(0));
+        assertInstanceOf(GenericDecorator.class, fn.decorators().getFirst());
+        assertEquals(new Parameter(new NamedType("T"), "t"), fn.parameters().getFirst());
 
-        UnsafeStatement unsafe = (UnsafeStatement) fn.body().get().statements().get(0);
+        UnsafeStatement unsafe = (UnsafeStatement) fn.body().get().statements().getFirst();
         assertTrue(unsafe.code().contains("printf"));
     }
 
@@ -184,7 +183,7 @@ class ParserTests {
     @DisplayName("Parses a global variable with initializer")
     void testGlobalVariable() {
         Program program = parse("int answer = 42;");
-        GlobalVariable global = (GlobalVariable) program.declarations().get(0);
+        GlobalVariable global = (GlobalVariable) program.declarations().getFirst();
         assertEquals(new NamedType("int"), global.type());
         assertEquals("answer", global.name());
         assertEquals(new IntLiteral(42), global.initializer().orElseThrow());
@@ -194,8 +193,8 @@ class ParserTests {
     @DisplayName("Parses a global variable without initializer")
     void testGlobalVariableNoInit() {
         Program program = parse("string name;");
-        GlobalVariable global = (GlobalVariable) program.declarations().get(0);
-        assertEquals(new NamedType("string"), global.name().equals("name") ? global.type() : global.type());
+        GlobalVariable global = (GlobalVariable) program.declarations().getFirst();
+        assertEquals(new NamedType("string"), global.type());
         assertTrue(global.initializer().isEmpty());
     }
 
@@ -203,7 +202,7 @@ class ParserTests {
     @DisplayName("Parses array-typed and generic-typed globals")
     void testGlobalVariableTypes() {
         Program program = parse("int[] arr; Array<int> list; unsigned long big;");
-        assertEquals(new ArrayType(new NamedType("int")), ((GlobalVariable) program.declarations().get(0)).type());
+        assertEquals(new ArrayType(new NamedType("int")), ((GlobalVariable) program.declarations().getFirst()).type());
         assertEquals(new GenericType("Array", List.of(new NamedType("int"))), ((GlobalVariable) program.declarations().get(1)).type());
         assertEquals(new NamedType("unsigned long"), ((GlobalVariable) program.declarations().get(2)).type());
     }
@@ -212,7 +211,7 @@ class ParserTests {
     @DisplayName("Parses a tuple type")
     void testTupleType() {
         Program program = parse("(int, string) pair;");
-        GlobalVariable global = (GlobalVariable) program.declarations().get(0);
+        GlobalVariable global = (GlobalVariable) program.declarations().getFirst();
         assertEquals(new TupleType(List.of(new NamedType("int"), new NamedType("string"))), global.type());
     }
 
@@ -237,7 +236,7 @@ class ParserTests {
         assertEquals(Visibility.PRIVATE, decl.visibility());
 
         assertEquals(2, decl.fields().size());
-        Field size = decl.fields().get(0);
+        Field size = decl.fields().getFirst();
         assertEquals(new NamedType("int"), size.type());
         assertEquals("size", size.name());
         assertEquals(Visibility.PUBLIC, size.visibility());
@@ -248,10 +247,10 @@ class ParserTests {
         assertTrue(name.initializer().isEmpty());
 
         assertEquals(1, decl.methods().size());
-        FunctionDeclaration grow = decl.methods().get(0);
+        FunctionDeclaration grow = decl.methods().getFirst();
         assertEquals("grow", grow.name());
         assertEquals(Visibility.PUBLIC, grow.visibility());
-        assertEquals(new Parameter(new NamedType("int"), "n"), grow.parameters().get(0));
+        assertEquals(new Parameter(new NamedType("int"), "n"), grow.parameters().getFirst());
     }
 
     // ============================================================
@@ -260,7 +259,7 @@ class ParserTests {
 
     private Block parseFunctionBody(String src) {
         Program program = parse("void f() { " + src + " }");
-        FunctionDeclaration fn = (FunctionDeclaration) program.declarations().get(0);
+        FunctionDeclaration fn = (FunctionDeclaration) program.declarations().getFirst();
         return fn.body().orElseThrow();
     }
 
@@ -274,7 +273,7 @@ class ParserTests {
                 else if x == 0 : x = 2;
                 else { x = 3; }
                 """);
-        IfStatement outer = (IfStatement) body.statements().get(0);
+        IfStatement outer = (IfStatement) body.statements().getFirst();
         assertTrue(outer.elseBranch().isPresent());
         IfStatement middle = (IfStatement) outer.elseBranch().get();
         assertTrue(middle.elseBranch().isPresent());
@@ -284,7 +283,7 @@ class ParserTests {
     @DisplayName("Parses while and do-while loops")
     void testLoops() {
         Block body = parseFunctionBody("while x < 10 { x = x + 1; } do : x = x - 1; while x > 0;");
-        WhileStatement whileStmt = (WhileStatement) body.statements().get(0);
+        WhileStatement whileStmt = (WhileStatement) body.statements().getFirst();
         assertEquals(new BinaryOp(new Identifier("x"), "<", new IntLiteral(10)), whileStmt.condition());
 
         DoWhileStatement doStmt = (DoWhileStatement) body.statements().get(1);
@@ -296,7 +295,7 @@ class ParserTests {
     @DisplayName("Parses a for loop with init, condition and update")
     void testForStatement() {
         Block body = parseFunctionBody("for int i = 0 : i < 10 : i++ { x = x + i; }");
-        ForStatement forStmt = (ForStatement) body.statements().get(0);
+        ForStatement forStmt = (ForStatement) body.statements().getFirst();
         LocalVariable init = (LocalVariable) forStmt.init().orElseThrow();
         assertEquals("i", init.name());
         assertEquals(new IntLiteral(0), init.initializer().orElseThrow());
@@ -315,10 +314,10 @@ class ParserTests {
                     default { y = 0; }
                 }
                 """);
-        SwitchStatement sw = (SwitchStatement) body.statements().get(0);
+        SwitchStatement sw = (SwitchStatement) body.statements().getFirst();
         assertEquals(3, sw.cases().size());
 
-        SwitchCase case1 = sw.cases().get(0);
+        SwitchCase case1 = sw.cases().getFirst();
         assertEquals(new IntLiteral(1), case1.label());
         assertInstanceOf(Block.class, case1.body());
 
@@ -335,9 +334,9 @@ class ParserTests {
     @DisplayName("Parses break and continue")
     void testBreakContinue() {
         Block body = parseFunctionBody("while true { break; continue; }");
-        WhileStatement whileStmt = (WhileStatement) body.statements().get(0);
+        WhileStatement whileStmt = (WhileStatement) body.statements().getFirst();
         Block loopBody = (Block) whileStmt.body();
-        assertInstanceOf(BreakStatement.class, loopBody.statements().get(0));
+        assertInstanceOf(BreakStatement.class, loopBody.statements().getFirst());
         assertInstanceOf(ContinueStatement.class, loopBody.statements().get(1));
     }
 
@@ -345,7 +344,7 @@ class ParserTests {
     @DisplayName("Parses return with and without value")
     void testReturnStatements() {
         Block body = parseFunctionBody("return; return x + 1;");
-        ReturnStatement empty = (ReturnStatement) body.statements().get(0);
+        ReturnStatement empty = (ReturnStatement) body.statements().getFirst();
         assertTrue(empty.value().isEmpty());
         ReturnStatement valued = (ReturnStatement) body.statements().get(1);
         assertEquals(new BinaryOp(new Identifier("x"), "+", new IntLiteral(1)), valued.value().orElseThrow());
@@ -355,7 +354,7 @@ class ParserTests {
     @DisplayName("Parses local variable declarations and assignments")
     void testLocalVariablesAndAssignments() {
         Block body = parseFunctionBody("int x = 5; x = x + 1;");
-        LocalVariable decl = (LocalVariable) body.statements().get(0);
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
         assertEquals(new NamedType("int"), decl.type());
         assertEquals("x", decl.name());
         assertEquals(new IntLiteral(5), decl.initializer().orElseThrow());
@@ -373,7 +372,7 @@ class ParserTests {
     @DisplayName("Respects operator precedence")
     void testPrecedence() {
         Block body = parseFunctionBody("int x = 1 + 2 * 3;");
-        LocalVariable decl = (LocalVariable) body.statements().get(0);
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
         assertEquals(new BinaryOp(new IntLiteral(1), "+", new BinaryOp(new IntLiteral(2), "*", new IntLiteral(3))),
                 decl.initializer().orElseThrow());
     }
@@ -382,7 +381,7 @@ class ParserTests {
     @DisplayName("Respects parentheses in expressions")
     void testGrouping() {
         Block body = parseFunctionBody("int x = (1 + 2) * 3;");
-        LocalVariable decl = (LocalVariable) body.statements().get(0);
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
         assertEquals(new BinaryOp(new BinaryOp(new IntLiteral(1), "+", new IntLiteral(2)), "*", new IntLiteral(3)),
                 decl.initializer().orElseThrow());
     }
@@ -391,7 +390,7 @@ class ParserTests {
     @DisplayName("Parses logical, is-check, equality and relational operators")
     void testLogicOperators() {
         Block body = parseFunctionBody("bool b = x is int && y == 1 || !z;");
-        LocalVariable decl = (LocalVariable) body.statements().get(0);
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
         Expression expr = decl.initializer().orElseThrow();
         assertInstanceOf(BinaryOp.class, expr);
         BinaryOp or = (BinaryOp) expr;
@@ -408,7 +407,7 @@ class ParserTests {
     @DisplayName("Parses literals")
     void testLiterals() {
         Block body = parseFunctionBody("int a = 42; float b = 3.5; bool c = true; char d = 'x'; string e = \"hi\";");
-        assertEquals(new IntLiteral(42), ((LocalVariable) body.statements().get(0)).initializer().orElseThrow());
+        assertEquals(new IntLiteral(42), ((LocalVariable) body.statements().getFirst()).initializer().orElseThrow());
         assertEquals(new FloatLiteral(3.5), ((LocalVariable) body.statements().get(1)).initializer().orElseThrow());
         assertEquals(new BoolLiteral(true), ((LocalVariable) body.statements().get(2)).initializer().orElseThrow());
         assertEquals(new CharLiteral('x'), ((LocalVariable) body.statements().get(3)).initializer().orElseThrow());
@@ -419,7 +418,7 @@ class ParserTests {
     @DisplayName("Parses unary and postfix increment/decrement")
     void testIncrementDecrement() {
         Block body = parseFunctionBody("int a = ++x; int b = x++; int c = --y; int d = y--;");
-        assertEquals(new UnaryOp("++", new Identifier("x")), ((LocalVariable) body.statements().get(0)).initializer().orElseThrow());
+        assertEquals(new UnaryOp("++", new Identifier("x")), ((LocalVariable) body.statements().getFirst()).initializer().orElseThrow());
         assertEquals(new PostfixOp("++", new Identifier("x")), ((LocalVariable) body.statements().get(1)).initializer().orElseThrow());
         assertEquals(new UnaryOp("--", new Identifier("y")), ((LocalVariable) body.statements().get(2)).initializer().orElseThrow());
         assertEquals(new PostfixOp("--", new Identifier("y")), ((LocalVariable) body.statements().get(3)).initializer().orElseThrow());
@@ -429,7 +428,7 @@ class ParserTests {
     @DisplayName("Parses array literals")
     void testArrayLiteral() {
         Block body = parseFunctionBody("int[] a = {1, 2, 3};");
-        LocalVariable decl = (LocalVariable) body.statements().get(0);
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
         assertEquals(new ArrayType(new NamedType("int")), decl.type());
         assertEquals(new ArrayLiteral(List.of(new IntLiteral(1), new IntLiteral(2), new IntLiteral(3))),
                 decl.initializer().orElseThrow());
@@ -439,7 +438,7 @@ class ParserTests {
     @DisplayName("Parses empty array literal")
     void testEmptyArrayLiteral() {
         Block body = parseFunctionBody("int[] a = {};");
-        LocalVariable decl = (LocalVariable) body.statements().get(0);
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
         assertEquals(new ArrayLiteral(List.of()), decl.initializer().orElseThrow());
     }
 
@@ -447,7 +446,7 @@ class ParserTests {
     @DisplayName("Parses tuple literals")
     void testTupleLiteral() {
         Block body = parseFunctionBody("(int, int) p = (1, 2);");
-        LocalVariable decl = (LocalVariable) body.statements().get(0);
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
         assertEquals(new TupleExpression(List.of(new IntLiteral(1), new IntLiteral(2))),
                 decl.initializer().orElseThrow());
     }
@@ -456,7 +455,7 @@ class ParserTests {
     @DisplayName("Parses function calls, member access and index access")
     void testPostfixChains() {
         Block body = parseFunctionBody("foo.bar(1, 2)[0] = 5;");
-        Assignment assignment = (Assignment) body.statements().get(0);
+        Assignment assignment = (Assignment) body.statements().getFirst();
         IndexAccess index = (IndexAccess) assignment.target();
         FunctionCall call = (FunctionCall) index.array();
         MemberAccess member = (MemberAccess) call.callee();
@@ -470,7 +469,7 @@ class ParserTests {
     @DisplayName("Generic functions are called without type arguments")
     void testGenericCallWithoutTypeArgs() {
         Block body = parseFunctionBody("print(10);");
-        ExpressionStatement stmt = (ExpressionStatement) body.statements().get(0);
+        ExpressionStatement stmt = (ExpressionStatement) body.statements().getFirst();
         FunctionCall call = (FunctionCall) stmt.expression();
         assertEquals(new Identifier("print"), call.callee());
         assertEquals(List.of(new IntLiteral(10)), call.arguments());

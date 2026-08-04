@@ -61,23 +61,23 @@ public final class SyntaxTree {
 
     /**
      * @param typeParams The declared type parameter names.
-     * @generic(T, U) declares the type parameters of a generic function or object.
+     * {@code @generic(T, U)} declares the type parameters of a generic function or object.
      */
     public record GenericDecorator(List<Type> typeParams) implements Decorator {}
 
     /**
-     * @pure marks a function as free of side effects.
+     * {@code @pure} marks a function as free of side effects.
      */
     public record PureDecorator() implements Decorator {}
 
     /**
      * @param documentation The documentation text.
-     * @docs("...") attaches documentation to a declaration.
+     * {@code @docs("...")} attaches documentation to a declaration.
      */
     public record DocsDecorator(String documentation) implements Decorator {}
 
     /**
-     * @const marks a value as compile-time constant.
+     * {@code @const} marks a value as compile-time constant.
      */
     public record ConstDecorator() implements Decorator {}
 

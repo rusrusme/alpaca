@@ -89,7 +89,7 @@ public final class ModuleLoader {
                 return rootPath;
             }
         }
-
+        System.out.println(relativePath);
         throw new AlpacaCompilerError("alpaca: module loader error: could not resolve import: '" + importPath + "'");
     }
 }
