@@ -21,7 +21,7 @@ public final class SymbolTable {
     /**
      * The kind of a declared name.
      */
-    public enum Kind {VARIABLE, FUNCTION, OBJECT, FIELD, METHOD, TYPE_PARAMETER}
+    public enum Kind {VARIABLE, FUNCTION, OBJECT, FIELD, METHOD, CONSTRUCTOR, TYPE_PARAMETER}
 
     /**
      * A resolved declaration.

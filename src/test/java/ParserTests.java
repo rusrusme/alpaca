@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
 
 import static net.rusrusme.alpacac.SyntaxTree.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -251,6 +252,55 @@ class ParserTests {
         assertEquals("grow", grow.name());
         assertEquals(Visibility.PUBLIC, grow.visibility());
         assertEquals(new Parameter(new NamedType("int"), "n"), grow.parameters().getFirst());
+    }
+
+    @Test
+    @DisplayName("Parses a constructor declaration with parameters and inherited visibility")
+    void testConstructorDeclaration() {
+        ObjectDeclaration decl = parseObject("""
+                object House {
+                    public int size;
+                    construct(int size, string name) {
+                        this.size = size;
+                    }
+                }
+                """);
+        ConstructDecl constructor = decl.constructor().orElseThrow();
+        assertEquals(2, constructor.parameters().size());
+        assertEquals(new Parameter(new NamedType("int"), "size"), constructor.parameters().getFirst());
+        assertEquals(new Parameter(new NamedType("string"), "name"), constructor.parameters().get(1));
+        // No explicit modifier: visibility is empty (inherits the object's visibility)
+        assertTrue(constructor.visibility().isEmpty());
+    }
+
+    @Test
+    @DisplayName("Parses a constructor with an explicit visibility modifier")
+    void testConstructorVisibility() {
+        ObjectDeclaration decl = parseObject("public object House { private construct(int x) { } }");
+        ConstructDecl constructor = decl.constructor().orElseThrow();
+        assertEquals(Optional.of(Visibility.PRIVATE), constructor.visibility());
+    }
+
+    @Test
+    @DisplayName("Rejects a second constructor in the same object")
+    void testDuplicateConstructor() {
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class,
+                () -> parse("object A { construct() { } construct(int x) { } }"));
+        assertTrue(e.getMessage().contains("object can only have one constructor"));
+    }
+
+    @Test
+    @DisplayName("Keeps 'construct' contextual: a field of type construct and a method named construct still parse")
+    void testConstructIsContextual() {
+        ObjectDeclaration decl = parseObject("""
+                object A {
+                    construct x;
+                    void construct() { }
+                }
+                """);
+        assertEquals(new NamedType("construct"), decl.fields().getFirst().type());
+        assertEquals("construct", decl.methods().getFirst().name());
+        assertTrue(decl.constructor().isEmpty());
     }
 
     // ============================================================

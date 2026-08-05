@@ -106,8 +106,23 @@ public final class SyntaxTree {
             String name,
             List<Field> fields,
             List<FunctionDeclaration> methods,
+            Optional<ConstructDecl> constructor, // at most one per object; empty = no constructor
             Visibility visibility
     ) implements Declaration {}
+
+    /**
+     * A constructor declaration inside an object: {@code construct(params) { body }}.
+     * <p>
+     * At most one constructor may exist per object. The visibility is optional:
+     * when no modifier is given, the constructor inherits the visibility of the
+     * declaring object.
+     */
+    public record ConstructDecl(
+            List<Decorator> decorators,
+            Optional<Visibility> visibility, // empty = inherit the object's visibility
+            List<Parameter> parameters,
+            Block body
+    ) implements Node {}
 
     public record GlobalVariable(
             List<Decorator> decorators,

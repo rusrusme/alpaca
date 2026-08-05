@@ -3,8 +3,7 @@
 Companion to GRAMMAR.md. GRAMMAR.md defines the syntax (what parses); this
 document defines the semantics (what a parsed program means and which programs
 are valid). Implemented by `SemanticAnalyzer` + `SymbolTable` (milestone 1:
-scope resolution). Type checking is milestone 2 and intentionally not covered
-here yet.
+scope resolution) and `TypeChecker` (milestone 2: type checking).
 
 ---
 
@@ -13,7 +12,7 @@ here yet.
 A **symbol** is a declared name together with its attributes:
 
 - `name` - the declared name
-- `kind` - VARIABLE, FUNCTION, OBJECT, FIELD, METHOD, TYPE_PARAMETER
+- `kind` - VARIABLE, FUNCTION, OBJECT, FIELD, METHOD, CONSTRUCTOR, TYPE_PARAMETER
 - `type` - the declared type (null for objects)
 - `visibility` - PUBLIC or PRIVATE
 - `constant` - true if declared with `@const`
@@ -72,6 +71,28 @@ values.
 - `this` is optional: bare names fall back to own fields implicitly (see
   above). Use `this.field` to disambiguate explicitly.
 
+### Construction calls `Point(...)`
+
+- Calling an object name constructs an instance: `Point(1, 2)`. The callee
+  resolves to the object itself, not to a function.
+- The object **must** declare a constructor
+  (`construct(params) { ... }`); an object without a constructor cannot be
+  constructed. At most one constructor may exist per object (enforced by the
+  parser). Constructor overloading is a later milestone.
+- The constructor's visibility is either explicit (`public construct`,
+  `private construct`) or inherited from the object when no modifier is
+  given. A private constructor is only accessible from inside the declaring
+  object (field initializers, method bodies, the constructor body itself).
+- The constructor body is a scope like a method body: parameters are locals,
+  `this` and implicit field access work. It behaves like a `void` function:
+  `return;` is allowed, returning a value is an error.
+- Arity and argument types are validated by the type checker against the
+  constructor's parameters; the call's type is the object type.
+- Internally the constructor occupies the member name `construct`, so a
+  field or method named `construct` collides with it (duplicate member
+  error) - but `construct` is not a reserved word: `construct x;` is a field
+  of a type named `construct`, and `void construct()` a regular method.
+
 ---
 
 ## 3. Write vs. Read Ambiguity
@@ -100,10 +121,33 @@ The analyzer rejects:
 - undefined variables and undefined functions
 - functions, objects, and type parameters used as values
 - access to `private` members from outside the declaring object
+- construction calls on objects without a constructor, and access to
+  `private` constructors from outside the declaring object
 - writes to `@const` names (assignment, increment, decrement)
 - misuse of `this` (outside an object, or as a value)
 - invalid assignment targets (calls, literals, ...)
 - top-level statements (also rejected by the parser)
+
+### Type checks (milestone 2, `TypeChecker`)
+
+- assignment compatibility: exact type match or numeric widening along the
+  rank chain `int < unsigned int < long < unsigned long < float < double`;
+  narrowing is rejected (`double -> float`, `long -> int`, `unsigned -> int`)
+- unsigned types (`unsigned int`, `unsigned long`) reject statically negative
+  constant values: `unsigned int x = -1;` is an error; non-constant values
+  are a runtime concern, as in C
+- arithmetic result types follow the same rank chain (`unsigned int + int`
+  is `unsigned int`, `int + double` is `double`)
+- return statements against the declared return type (including void rules)
+- call arity and argument types (global functions and methods)
+- conditions of `if`/`while`/`do-while`/`for` must be `bool`
+- array indexing: receiver must be an array, index must be `int`
+- member access on statically unknown receivers (e.g. call results),
+  including the private-visibility rule; generic types resolve via their
+  base object (`Array<E>` -> members of `Array`)
+- operator operands: arithmetic and ordering on numeric values,
+  `+` also concatenates `string`, logical operators on `bool`
+- methods cannot be used as values
 
 ### Constants
 
@@ -116,12 +160,15 @@ fields from variables: `cannot assign to constant field 'x'` vs.
 
 ## 5. Intentional Gaps (later milestones)
 
-- **Type checking** (milestone 2): expression types, call argument counts and
-  compatibility, `is` type narrowing, assignment compatibility, tuple/array
-  element types.
+- **`is`-type narrowing** in if branches (the `is` expression itself types to
+  `bool` already).
 - **Loop-context checks** for `break`/`continue`.
 - **`@pure`** side-effect analysis.
 - **`@main`** validation (exactly one entry point).
+- **Overloading** of functions, methods and constructors: today a second
+  declaration with the same name (even with different parameters) is a
+  duplicate-declaration error. A single overloading pass is planned; until
+  then at most one constructor per object.
 - **Line/column info** in semantic error messages: the AST stores no source
   positions today.
 - **Top-level `private` across module boundaries**: `ModuleLoader` returns
@@ -142,6 +189,12 @@ fields from variables: `cannot assign to constant field 'x'` vs.
   refers to, or `null` when the expression is not statically resolvable to a
   single declaration (literals, call results, computed values). `null` is not
   an error - it means "left for the type checker".
+- **TypeChecker contract**: consumes the M1 `resolvedSymbols` map
+  (expression -> Symbol, populated during pass 2). Expressions M1 could not
+  resolve statically (e.g. member access on a call result) are typed and
+  validated by the TypeChecker itself, including the visibility rule. Arity
+  and parameter types come from declaration maps the TypeChecker collects
+  from the program.
 - **Duplicate detection**: `Map.putIfAbsent` returns the previous value, so
   `defineGlobal`/`defineLocal` report whether the name was already taken; the
   analyzer turns that into the error message.

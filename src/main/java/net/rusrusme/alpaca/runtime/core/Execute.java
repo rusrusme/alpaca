@@ -69,6 +69,9 @@ public final class Execute {
             SemanticAnalyzer analyzer = new SemanticAnalyzer();
             analyzer.analyze(programWithDeps);
 
+            TypeChecker typeChecker = new TypeChecker(analyzer.symbolTable(), analyzer.resolvedSymbols());
+            typeChecker.check(programWithDeps);
+
             System.out.println(programWithDeps);
 
 //            monomorphizer = new LamaMonomorphizer();

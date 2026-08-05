@@ -58,12 +58,16 @@ ObjectType          ::= Identifier ;
 ```ebnf
 ObjectDecl          ::= "object" Identifier "{" { MemberDecl } "}" ;
 
-MemberDecl          ::= [ DecoratorList ] [ VisibilityModifier ] ( FieldDecl | MethodDecl ) ;
+MemberDecl          ::= [ DecoratorList ] [ VisibilityModifier ] ( FieldDecl | MethodDecl | ConstructDecl ) ;
 
 VisibilityModifier  ::= "public" | "private" ;
 
 FieldDecl           ::= Type Identifier [ "=" Expression ] ";" ;
 MethodDecl          ::= Type Identifier "(" [ ParameterList ] ")" BlockStmt ;
+
+/* A constructor initializes an object instance. At most one per object;
+   without a visibility modifier it inherits the object's visibility. */
+ConstructDecl       ::= "construct" "(" [ ParameterList ] ")" BlockStmt ;
 
 ParameterList       ::= Parameter { "," Parameter } ;
 Parameter           ::= Type Identifier ;
@@ -201,6 +205,11 @@ not carry line/column information yet (the AST does not store source positions).
 > See **SEMANTICS.md** for the full semantic reference (symbols, scopes,
 > resolution order, `this`, write/read ambiguity, intentional gaps).
 
+Milestone 2 (type checking) is implemented by `TypeChecker`, a separate pass
+after the scope-resolution analyzer; it types all expressions, validates
+assignment/return/conditions/calls/indexing/member access, and reports errors
+as `alpaca: compiler error: ...`.
+
 ### Names & Scopes
 
 - Top-level declarations (objects, functions, global variables) share a single
@@ -227,8 +236,16 @@ not carry line/column information yet (the AST does not store source positions).
 - A bare name that resolves to a variable while a field of the same name exists
   is only ambiguous on writes (`name = ...`, `name++`, `name--`): the compiler
   rejects it and requires `this.name` for the field. Reads prefer the variable.
-- A call with a plain identifier callee must resolve to a function; a call with
-  a member callee must resolve to a method of the receiver's object type.
+- A call with a plain identifier callee must resolve to a function, or to an
+  object with a constructor (a construction call, see below). A call with a
+  member callee must resolve to a method of the receiver's object type.
+- Construction: calling an object name (`Point(1, 2)`) creates an instance.
+  The object must declare a constructor; an object without one cannot be
+  constructed. At most one constructor per object. The constructor's
+  visibility is either explicit (`public construct`, `private construct`) or
+  inherited from the object; a private constructor is only accessible from
+  inside the declaring object. Arity and argument types are checked by the
+  type checker; the call's type is the object type.
 - Member access (`obj.member`) resolves against the declared type of the
   receiver when that type is a known object. Receivers whose type is not
   statically known (e.g. call results) are checked by the type checker.

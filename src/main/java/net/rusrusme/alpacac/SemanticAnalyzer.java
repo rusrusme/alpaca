@@ -31,6 +31,21 @@ public final class SemanticAnalyzer {
      */
     private String currentObject;
 
+    /**
+     * Expressions to the symbols they resolved to, populated during pass 2.
+     * Purely additive side info for the type checker (milestone 2); the
+     * resolution behaviour itself is unchanged.
+     */
+    private final Map<Expression, Symbol> resolved = new IdentityHashMap<>();
+
+    public SymbolTable symbolTable() {
+        return symbols;
+    }
+
+    public Map<Expression, Symbol> resolvedSymbols() {
+        return resolved;
+    }
+
     public void analyze(Program program) {
         collect(program.declarations());
         resolve(program.declarations());
@@ -69,6 +84,13 @@ public final class SemanticAnalyzer {
             defineMember(members, symbol, object.name());
             checkParameters(method, object.name());
         }
+        object.constructor().ifPresent(constructor -> {
+            // Without an explicit modifier the constructor inherits the object's visibility.
+            Visibility visibility = constructor.visibility().orElse(object.visibility());
+            Symbol symbol = new Symbol("construct", Kind.CONSTRUCTOR, null, visibility, false, object.name());
+            defineMember(members, symbol, object.name());
+            checkParameters("construct", constructor.parameters(), constructor.decorators(), object.name());
+        });
         symbols.defineObject(object.name(), members);
     }
 
@@ -100,15 +122,19 @@ public final class SemanticAnalyzer {
     }
 
     private void checkParameters(FunctionDeclaration function, String objectName) {
+        checkParameters(function.name(), function.parameters(), function.decorators(), objectName);
+    }
+
+    private void checkParameters(String name, List<Parameter> parameters, List<Decorator> decorators, String objectName) {
         Set<String> names = new HashSet<>();
-        for (Parameter parameter : function.parameters()) {
+        for (Parameter parameter : parameters) {
             if (!names.add(parameter.name())) {
                 String context = objectName != null ? " of object '" + objectName + "'" : "";
                 throw new AlpacaCompilerError(
-                        "duplicate parameter '" + parameter.name() + "' in function '" + function.name() + "'" + context);
+                        "duplicate parameter '" + parameter.name() + "' in function '" + name + "'" + context);
             }
         }
-        checkTypeParameters(function.decorators());
+        checkTypeParameters(decorators);
     }
 
     private void checkTypeParameters(List<Decorator> decorators) {
@@ -154,6 +180,7 @@ public final class SemanticAnalyzer {
         for (FunctionDeclaration method : object.methods()) {
             resolveFunction(method);
         }
+        object.constructor().ifPresent(this::resolveConstructor);
         currentObject = outer;
     }
 
@@ -167,6 +194,16 @@ public final class SemanticAnalyzer {
                     Visibility.PUBLIC, false, null));
         }
         resolveStatement(function.body().get());
+        symbols.popScope();
+    }
+
+    private void resolveConstructor(ConstructDecl constructor) {
+        symbols.pushScope();
+        for (Parameter parameter : constructor.parameters()) {
+            symbols.defineLocal(new Symbol(parameter.name(), Kind.VARIABLE, parameter.type(),
+                    Visibility.PUBLIC, false, null));
+        }
+        resolveStatement(constructor.body());
         symbols.popScope();
     }
 
@@ -236,6 +273,7 @@ public final class SemanticAnalyzer {
         switch (assignment.target()) {
             case Identifier identifier -> {
                 Symbol symbol = lookupVariable(identifier.name());
+                resolved.put(identifier, symbol);
                 checkFieldConflict(identifier, symbol);
                 if (symbol.constant()) {
                     throw new AlpacaCompilerError(
@@ -254,12 +292,20 @@ public final class SemanticAnalyzer {
         }
     }
 
+    private Symbol resolveExpression(Expression expression) {
+        Symbol symbol = resolveExpressionInner(expression);
+        if (symbol != null) {
+            resolved.put(expression, symbol);
+        }
+        return symbol;
+    }
+
     /**
      * Resolves an expression and returns the symbol it refers to, or {@code null}
      * when the expression is not statically resolvable to a single declaration
      * (literals, call results, computed values). Undefined names throw.
      */
-    private Symbol resolveExpression(Expression expression) {
+    private Symbol resolveExpressionInner(Expression expression) {
         switch (expression) {
             case Literal _ -> {
                 return null;
@@ -324,12 +370,20 @@ public final class SemanticAnalyzer {
                 if (symbol == null) {
                     throw new AlpacaCompilerError("undefined function '" + identifier.name() + "'");
                 }
-                if (symbol.kind() != Kind.FUNCTION) {
+                if (symbol.kind() == Kind.OBJECT) {
+                    // Construction call: Point(...) - validated here, typed by the type checker.
+                    checkConstructorCall(identifier, symbol);
+                    resolved.put(identifier, symbol);
+                }
+                else if (symbol.kind() != Kind.FUNCTION) {
                     throw new AlpacaCompilerError("cannot call '" + identifier.name() + "': not a function");
                 }
             }
             case MemberAccess memberAccess -> {
                 Symbol symbol = resolveMemberAccess(memberAccess);
+                if (symbol != null) {
+                    resolved.put(memberAccess, symbol);
+                }
                 if (symbol != null && symbol.kind() != Kind.METHOD) {
                     throw new AlpacaCompilerError(
                             "cannot call '" + memberAccess.member() + "': not a method");
@@ -339,6 +393,25 @@ public final class SemanticAnalyzer {
         }
         for (Expression argument : call.arguments()) {
             resolveExpression(argument);
+        }
+    }
+
+    /**
+     * Validates a construction call {@code Point(...)}: the object must declare
+     * a constructor, and a private constructor is only accessible from inside
+     * the declaring object. Arity and argument types are checked by the type
+     * checker (milestone 2).
+     */
+    private void checkConstructorCall(Identifier callee, Symbol objectSymbol) {
+        Map<String, Symbol> members = symbols.lookupObject(objectSymbol.name());
+        Symbol constructor = members != null ? members.get("construct") : null;
+        if (constructor == null || constructor.kind() != Kind.CONSTRUCTOR) {
+            throw new AlpacaCompilerError(
+                    "object '" + objectSymbol.name() + "' has no constructor and cannot be constructed");
+        }
+        if (constructor.visibility() == Visibility.PRIVATE && !objectSymbol.name().equals(currentObject)) {
+            throw new AlpacaCompilerError(
+                    "cannot access private constructor of object '" + objectSymbol.name() + "'");
         }
     }
 
@@ -392,7 +465,7 @@ public final class SemanticAnalyzer {
                 case OBJECT -> throw new AlpacaCompilerError("cannot use object '" + name + "' as a value");
                 case TYPE_PARAMETER ->
                         throw new AlpacaCompilerError("cannot use type parameter '" + name + "' as a value");
-                case FIELD, METHOD -> throw new AlpacaCompilerError("undefined variable '" + name + "'");
+                case FIELD, METHOD, CONSTRUCTOR -> throw new AlpacaCompilerError("undefined variable '" + name + "'");
             };
         }
         // Implicit field access: inside an object (field initializers and method

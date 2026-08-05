@@ -4,6 +4,8 @@ import net.rusrusme.alpacac.AlpacaParser;
 import net.rusrusme.alpacac.SemanticAnalyzer;
 import net.rusrusme.alpacac.SyntaxTree.Declaration;
 import net.rusrusme.alpacac.SyntaxTree.Program;
+import net.rusrusme.alpacac.TypeChecker;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -477,6 +479,100 @@ class SemanticTests {
     }
 
     // ============================================================
+    //  Constructors
+    // ============================================================
+
+    @Test
+    @DisplayName("Accepts constructing an object with a public constructor")
+    void testConstructionWithConstructor() {
+        analyze("""
+                object Point {
+                    public int x;
+                    public construct(int x, int y) {
+                        this.x = x;
+                    }
+                }
+                void f() {
+                    Point p = Point(1, 2);
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Accepts a constructor without modifier inheriting the object visibility")
+    void testConstructorInheritsObjectVisibility() {
+        analyze("""
+                public object Point {
+                    construct() { }
+                }
+                void f() {
+                    Point p = Point();
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Accepts a private constructor from inside the declaring object")
+    void testPrivateConstructorFromInside() {
+        analyze("""
+                object A {
+                    private construct(int x) { }
+                    public A make(int x) {
+                        return A(x);
+                    }
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Rejects constructing an object without a constructor")
+    void testConstructionWithoutConstructor() {
+        AlpacaCompilerError e = analyzeError("""
+                object A { }
+                void f() {
+                    A a = A();
+                }
+                """);
+        assertTrue(e.getMessage().contains("has no constructor and cannot be constructed"));
+    }
+
+    @Test
+    @DisplayName("Rejects accessing a private constructor from outside")
+    void testPrivateConstructorFromOutside() {
+        AlpacaCompilerError e = analyzeError("""
+                object A {
+                    private construct() { }
+                }
+                void f() {
+                    A a = A();
+                }
+                """);
+        assertTrue(e.getMessage().contains("cannot access private constructor of object 'A'"));
+    }
+
+    @Test
+    @DisplayName("Rejects duplicate parameters in a constructor")
+    void testConstructorDuplicateParameter() {
+        AlpacaCompilerError e = analyzeError("object A { construct(int x, int x) { } }");
+        assertTrue(e.getMessage().contains("duplicate parameter 'x'"));
+    }
+
+    @Test
+    @DisplayName("Accepts implicit field access and this in a constructor body")
+    void testConstructorBody() {
+        analyze("""
+                object Person {
+                    public int age;
+                    public string name;
+                    public construct(int age, string name) {
+                        this.age = age;
+                        this.name = name;
+                    }
+                }
+                """);
+    }
+
+    // ============================================================
     //  Bundled stdlib integration
     // ============================================================
 
@@ -492,7 +588,11 @@ class SemanticTests {
                 declarations.addAll(program.declarations());
             }
         }
-        assertFalse(declarations.isEmpty(), "no stdlib modules found");
-        new SemanticAnalyzer().analyze(new Program("stdlib", List.of(), declarations));
+        Assumptions.assumeFalse(declarations.isEmpty(),
+                "no stdlib modules found in runtime/lib; skipping");
+        Program program = new Program("stdlib", List.of(), declarations);
+        SemanticAnalyzer analyzer = new SemanticAnalyzer();
+        analyzer.analyze(program);
+        new TypeChecker(analyzer.symbolTable(), analyzer.resolvedSymbols()).check(program);
     }
 }

@@ -85,19 +85,26 @@ public final class AlpacaParser {
 
         List<Field> fields = new ArrayList<>();
         List<FunctionDeclaration> methods = new ArrayList<>();
+        ConstructDecl constructor = null;
 
         while (!check(RBRACE) && !isAtEnd()) {
             List<Decorator> memberDecorators = parseDecorators();
-            Visibility memberVisibility = parseVisibility();
-            if (isFunctionDeclaration()) {
-                methods.add(parseFunctionDeclaration(memberDecorators, memberVisibility));
+            Optional<Visibility> memberVisibility = parseVisibilityOptional();
+            if (isConstructorDeclaration()) {
+                if (constructor != null) {
+                    throw syntaxError(peek(), "object can only have one constructor");
+                }
+                constructor = parseConstructDeclaration(memberDecorators, memberVisibility);
+            }
+            else if (isFunctionDeclaration()) {
+                methods.add(parseFunctionDeclaration(memberDecorators, memberVisibility.orElse(Visibility.PRIVATE)));
             }
             else {
-                fields.add(parseField(memberDecorators, memberVisibility));
+                fields.add(parseField(memberDecorators, memberVisibility.orElse(Visibility.PRIVATE)));
             }
         }
         consume(RBRACE, "expected '}' after object body");
-        return new ObjectDeclaration(decorators, objectName.lexeme(), fields, methods, visibility);
+        return new ObjectDeclaration(decorators, objectName.lexeme(), fields, methods, Optional.ofNullable(constructor), visibility);
     }
 
     private Field parseField(List<Decorator> decorators, Visibility visibility) {
@@ -132,6 +139,26 @@ public final class AlpacaParser {
         return new FunctionDeclaration(decorators, returnType, name.lexeme(), parameters, Optional.of(body), visibility);
     }
 
+    private ConstructDecl parseConstructDeclaration(List<Decorator> decorators, Optional<Visibility> visibility) {
+        advance(); // the 'construct' identifier (already checked by isConstructorDeclaration)
+        consume(LPAR, "expected '(' after 'construct'");
+
+        List<Parameter> parameters = new ArrayList<>();
+        if (!check(RPAR)) {
+            do {
+                Type paramType = parseType();
+                Token paramName = consume(IDENTIFIER, "expected parameter name");
+                parameters.add(new Parameter(paramType, paramName.lexeme()));
+            }
+            while (match(COMMA));
+        }
+        consume(RPAR, "expected ')' after parameters");
+        consume(LBRACE, "expected '{' before constructor body");
+        Block body = new Block(parseBlock());
+
+        return new ConstructDecl(decorators, visibility, parameters, body);
+    }
+
     private GlobalVariable parseGlobalVariable(List<Decorator> decorators, Visibility visibility) {
         Type type = parseType();
         Token name = consume(IDENTIFIER, "expected variable name");
@@ -147,6 +174,18 @@ public final class AlpacaParser {
         if (match(PUBLIC)) return Visibility.PUBLIC;
         if (match(PRIVATE)) return Visibility.PRIVATE;
         return Visibility.PRIVATE;
+    }
+
+    /**
+     * Like {@link #parseVisibility()}, but distinguishes an explicit modifier
+     * from none: returns {@link Optional#empty()} when no visibility modifier
+     * is present (used by constructors, which then inherit the object's
+     * visibility instead of defaulting to PRIVATE).
+     */
+    private Optional<Visibility> parseVisibilityOptional() {
+        if (match(PUBLIC)) return Optional.of(Visibility.PUBLIC);
+        if (match(PRIVATE)) return Optional.of(Visibility.PRIVATE);
+        return Optional.empty();
     }
 
     // --------------------------------------------------------------------------
@@ -693,6 +732,22 @@ public final class AlpacaParser {
             i += 2;
         }
         return i - current;
+    }
+
+    /**
+     * Determines if the current token sequence represents a constructor
+     * declaration: the identifier {@code construct} immediately followed by
+     * '('. The word is contextual, not reserved: {@code construct x;} is still
+     * a field of type {@code construct}, and {@code void construct()} a
+     * regular method named {@code construct}.
+     *
+     * @return True if it is a constructor declaration, false otherwise.
+     */
+    private boolean isConstructorDeclaration() {
+        return peek().type() == IDENTIFIER
+                && peek().lexeme().equals("construct")
+                && current + 1 < tokens.size()
+                && tokens.get(current + 1).type() == LPAR;
     }
 
     /**
