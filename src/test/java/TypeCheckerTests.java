@@ -1,13 +1,10 @@
-import net.rusrusme.alpacac.AlpacaCompilerError;
-import net.rusrusme.alpacac.AlpacaLexer;
-import net.rusrusme.alpacac.AlpacaParser;
-import net.rusrusme.alpacac.SemanticAnalyzer;
+import net.rusrusme.alpacac.*;
 import net.rusrusme.alpacac.SyntaxTree.Program;
-import net.rusrusme.alpacac.TypeChecker;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class TypeCheckerTests {
 
@@ -383,7 +380,7 @@ class TypeCheckerTests {
                 public object Array {
                     E[] data;
                     public int length;
-
+                
                     public Array<E> new(int length) {
                         Array<E> arr;
                         arr.length = length;
@@ -495,5 +492,358 @@ class TypeCheckerTests {
                 }
                 """);
         assertTrue(e.getMessage().contains("cannot assign string to int"));
+    }
+
+    @Test
+    @DisplayName("Accepts constructing a generic object via expected-type inference")
+    void testGenericConstructionExpectedType() {
+        analyze("""
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    int length;
+                
+                    public construct(string name) {
+                        name = "Hello";
+                    }
+                }
+                void f() {
+                    Array<int> arr = Array("Hi");
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Accepts expected-type inference through a return statement")
+    void testGenericConstructionInReturn() {
+        analyze("""
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    int length;
+                
+                    public construct(string name) {
+                        name = "Hello";
+                    }
+                }
+                Array<int> make() {
+                    return Array("Hi");
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Accepts expected-type inference through a function argument")
+    void testGenericConstructionInArgument() {
+        analyze("""
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    int length;
+                
+                    public construct(string name) {
+                        name = "Hello";
+                    }
+                }
+                void take(Array<int> a) { }
+                void f() {
+                    take(Array("Hi"));
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Accepts raw construction without a generic target type")
+    void testGenericConstructionRawTarget() {
+        analyze("""
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    int length;
+                
+                    public construct(string name) {
+                        name = "Hello";
+                    }
+                }
+                void f() {
+                    Array arr = Array("Hi");
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Rejects expected-type inference with a mismatching base name")
+    void testGenericConstructionWrongTarget() {
+        AlpacaCompilerError e = analyzeError("""
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    int length;
+
+                    public construct(string name) {
+                        name = "Hello";
+                    }
+                }
+                object Point {
+                    public construct() { }
+                }
+                void f() {
+                    Point p = Array("Hi");
+                }
+                """);
+        assertTrue(e.getMessage().contains("cannot assign Array to Point"));
+    }
+
+    // ============================================================
+    //  Generic stdlib: unconstrained type parameters
+    // ============================================================
+
+    @Test
+    @DisplayName("Accepts generic method calls with concrete arguments")
+    void testGenericMethodCallConcreteArgs() {
+        analyze("""
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    int length;
+                    public construct(int length) {
+                        this.length = length;
+                    }
+                    public void add(E element) { }
+                }
+                void f() {
+                    Array<int> arr = Array(10);
+                    arr.add(5);
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Accepts a generic Optional with some, none and methods")
+    void testGenericOptional() {
+        analyze("""
+                @generic(E)
+                public object Optional {
+                    private E value;
+                    private bool present;
+                    public construct(E value, bool present) {
+                        this.value = value;
+                        this.present = present;
+                    }
+                    public bool isPresent() {
+                        return present;
+                    }
+                    public E get() {
+                        return value;
+                    }
+                }
+                @generic(E)
+                public Optional<E> none(E dummy) {
+                    return Optional(dummy, false);
+                }
+                @generic(E)
+                public Optional<E> some(E value) {
+                    return Optional(value, true);
+                }
+                void f() {
+                    Optional<int> o = some(5);
+                    Optional<int> n = none(0);
+                    bool b = o.isPresent();
+                    int v = o.get();
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Accepts Optional as the return type of a generic method")
+    void testGenericMethodReturningOptional() {
+        analyze("""
+                @generic(E)
+                public object Optional {
+                    private E value;
+                    private bool present;
+                    public construct(E value, bool present) {
+                        this.value = value;
+                        this.present = present;
+                    }
+                    public bool isPresent() {
+                        return present;
+                    }
+                    public E get() {
+                        return value;
+                    }
+                }
+                @generic(E)
+                public Optional<E> some(E value) {
+                    return Optional(value, true);
+                }
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    public construct(int length) { }
+                    public Optional<E> get(int index) {
+                        return some(data[0]);
+                    }
+                }
+                void f() {
+                    Array<int> arr = Array(10);
+                    Optional<int> o = arr.get(0);
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Still rejects mismatching concrete generic arguments")
+    void testGenericConcreteMismatch() {
+        AlpacaCompilerError e = analyzeError("""
+                @generic(E)
+                public object Box {
+                    public construct(int capacity) { }
+                }
+                void f() {
+                    Box<int> a = Box(1);
+                    Box<string> b = a;
+                }
+                """);
+        assertTrue(e.getMessage().contains("cannot assign Box<int> to Box<string>"));
+    }
+
+    // ============================================================
+    //  Edge cases
+    // ============================================================
+
+    @Test
+    @DisplayName("Accepts an empty array literal assigned to a typed array")
+    void testEmptyArrayLiteralWithExpectedType() {
+        analyze("void f() { int[] a = {}; }");
+    }
+
+    @Test
+    @DisplayName("Rejects an array literal with mismatching element types")
+    void testArrayLiteralElementMismatch() {
+        AlpacaCompilerError e = analyzeError("void f() { int[] a = {1, 2.5}; }");
+        assertTrue(e.getMessage().contains("array element"));
+    }
+
+    @Test
+    @DisplayName("Rejects assigning an int array to a float array (no array widening)")
+    void testArrayTypeNoWidening() {
+        AlpacaCompilerError e = analyzeError("""
+                void f() {
+                    int[] a = {1, 2};
+                    float[] b = a;
+                }
+                """);
+        assertTrue(e.getMessage().contains("cannot assign"));
+    }
+
+    @Test
+    @DisplayName("Rejects assigning an int to a bool")
+    void testIntToBoolRejected() {
+        AlpacaCompilerError e = analyzeError("void f() { bool b = 1; }");
+        assertTrue(e.getMessage().contains("cannot assign int to bool"));
+    }
+
+    @Test
+    @DisplayName("Rejects arithmetic on chars (char is not numeric in this milestone)")
+    void testCharNotNumeric() {
+        AlpacaCompilerError e = analyzeError("void f() { char c = 'a'; int i = c + 1; }");
+        assertTrue(e.getMessage().contains("requires a numeric value"));
+    }
+
+    @Test
+    @DisplayName("Accepts a tuple assignment with matching element types")
+    void testTupleMatch() {
+        analyze("void f() { (int, string) p = (1, \"a\"); }");
+    }
+
+    @Test
+    @DisplayName("Rejects a tuple assignment with mismatching element types")
+    void testTupleMismatch() {
+        AlpacaCompilerError e = analyzeError("void f() { (int, string) p = (1, 2); }");
+        assertTrue(e.getMessage().contains("cannot assign"));
+    }
+
+    @Test
+    @DisplayName("Rejects a negative constant for an unsigned constructor parameter")
+    void testUnsignedNegativeConstructorArgument() {
+        AlpacaCompilerError e = analyzeError("""
+                object Box {
+                    public construct(unsigned int capacity) { }
+                }
+                void f() {
+                    Box b = Box(-1);
+                }
+                """);
+        assertTrue(e.getMessage().contains("cannot assign a negative value to unsigned int"));
+    }
+
+    @Test
+    @DisplayName("Accepts a construction call as a standalone statement")
+    void testConstructionAsStatement() {
+        analyze("""
+                object Point {
+                    public construct(int x) { }
+                }
+                void f() {
+                    Point(1);
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Rejects accessing a private member on a call result")
+    void testPrivateMemberOnCallResult() {
+        AlpacaCompilerError e = analyzeError("""
+                object House {
+                    private int price;
+                }
+                House get_house() {
+                    House h;
+                    return h;
+                }
+                void f() {
+                    int p = get_house().price;
+                }
+                """);
+        assertTrue(e.getMessage().contains("cannot access private member 'price'"));
+    }
+
+    @Test
+    @DisplayName("Rejects a global initializer of the wrong type")
+    void testGlobalInitializerMismatch() {
+        AlpacaCompilerError e = analyzeError("int g = \"x\";");
+        assertTrue(e.getMessage().contains("initializer of global 'g'"));
+    }
+
+    @Test
+    @DisplayName("Accepts nested generic construction via expected type")
+    void testNestedGenericConstruction() {
+        analyze("""
+                @generic(E)
+                public object Optional {
+                    private E value;
+                    private bool present;
+                    public construct(E value, bool present) {
+                        this.value = value;
+                        this.present = present;
+                    }
+                }
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    public construct(int length) { }
+                }
+                void f() {
+                    Optional<Array<int>> o = Optional(Array(10), true);
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Rejects a bool condition that is a comparison of incompatible types")
+    void testIncompatibleComparison() {
+        AlpacaCompilerError e = analyzeError("void f() { bool b = \"a\" == 1; }");
+        assertTrue(e.getMessage().contains("cannot compare string with int"));
     }
 }

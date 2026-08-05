@@ -573,6 +573,106 @@ class SemanticTests {
     }
 
     // ============================================================
+    //  Constructor edge cases
+    // ============================================================
+
+    @Test
+    @DisplayName("Rejects undefined names inside a constructor body")
+    void testConstructorUndefinedName() {
+        AlpacaCompilerError e = analyzeError("object A { public construct() { missing = 1; } }");
+        assertTrue(e.getMessage().contains("undefined variable 'missing'"));
+    }
+
+    @Test
+    @DisplayName("Rejects construction arguments that do not resolve")
+    void testConstructionUndefinedArgument() {
+        AlpacaCompilerError e = analyzeError("""
+                object A {
+                    public construct(int x) { }
+                }
+                void f() {
+                    A a = A(missing);
+                }
+                """);
+        assertTrue(e.getMessage().contains("undefined variable 'missing'"));
+    }
+
+    @Test
+    @DisplayName("Rejects a private constructor from a field initializer of another object")
+    void testPrivateConstructorFromFieldInitializer() {
+        AlpacaCompilerError e = analyzeError("""
+                object Secret {
+                    private construct() { }
+                }
+                object Holder {
+                    int x = Secret();
+                }
+                """);
+        assertTrue(e.getMessage().contains("cannot access private constructor of object 'Secret'"));
+    }
+
+    @Test
+    @DisplayName("Accepts a private constructor from the object's own field initializer")
+    void testPrivateConstructorFromOwnFieldInitializer() {
+        analyze("""
+                object Secret {
+                    private construct() { }
+                    Secret next = Secret();
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("Rejects 'this' assignment outside an object")
+    void testThisAssignmentOutsideObject() {
+        AlpacaCompilerError e = analyzeError("void f() { this.x = 1; }");
+        assertTrue(e.getMessage().contains("'this' can only be used inside an object"));
+    }
+
+    @Test
+    @DisplayName("Rejects 'this' returned as a bare value")
+    void testThisBareValueInReturn() {
+        AlpacaCompilerError e = analyzeError("object A { int f() { return this; } }");
+        assertTrue(e.getMessage().contains("'this' can only be used with member access"));
+    }
+
+    @Test
+    @DisplayName("Rejects a duplicate top-level name across object and function")
+    void testDuplicateObjectAndFunction() {
+        AlpacaCompilerError e = analyzeError("object A { } void A() { }");
+        assertTrue(e.getMessage().contains("duplicate declaration of 'A'"));
+    }
+
+    @Test
+    @DisplayName("Rejects using a type parameter as a value")
+    void testTypeParameterAsValue() {
+        // Type parameters are never registered as symbols, so a bare use falls
+        // through to "undefined variable" (the TYPE_PARAMETER kind is unused).
+        AlpacaCompilerError e = analyzeError("""
+                @generic(T)
+                void f() {
+                    T x = T;
+                }
+                """);
+        assertTrue(e.getMessage().contains("undefined variable 'T'"));
+    }
+
+    @Test
+    @DisplayName("Rejects accessing a private method from outside")
+    void testPrivateMethodFromOutside() {
+        AlpacaCompilerError e = analyzeError("""
+                object A {
+                    void secret() { }
+                }
+                void f() {
+                    A a;
+                    a.secret();
+                }
+                """);
+        assertTrue(e.getMessage().contains("cannot access private member 'secret'"));
+    }
+
+    // ============================================================
     //  Bundled stdlib integration
     // ============================================================
 

@@ -503,4 +503,67 @@ class LexerTests {
         eof()
         ));
     }
+
+    @Test
+    @DisplayName("Tokenizes the modulo operator")
+    void testPercentOperator() {
+        assertTokens("5 % 2", List.of(
+                token(INT_LITERAL, "5", 5),
+                token(PERCENT, "%"),
+                token(INT_LITERAL, "2", 2),
+                eof()
+        ));
+    }
+
+    @Test
+    @DisplayName("Tokenizes += as two tokens (no compound assignment operator)")
+    void testPlusEqualsIsTwoTokens() {
+        assertTokens("x += 1", List.of(
+                token(IDENTIFIER, "x"),
+                token(PLUS, "+"),
+                token(EQUALS, "="),
+                token(INT_LITERAL, "1", 1),
+                eof()
+        ));
+    }
+
+    @Test
+    @DisplayName("Tokenizes an integer directly followed by an identifier as two tokens")
+    void testIntegerFollowedByIdentifier() {
+        assertTokens("12abc", List.of(
+                token(INT_LITERAL, "12", 12),
+                token(IDENTIFIER, "abc"),
+                eof()
+        ));
+    }
+
+    @Test
+    @DisplayName("Tokenizes a float followed by a dot as float then dot then integer")
+    void testFloatThenDot() {
+        assertTokens("1.2.3", List.of(
+                token(FLOAT_LITERAL, "1.2", 1.2f),
+                token(DOT, "."),
+                token(INT_LITERAL, "3", 3),
+                eof()
+        ));
+    }
+
+    @Test
+    @DisplayName("Tracks columns across tokens and newlines")
+    void testColumnTracking() {
+        List<Token> tokens = lexer.tokenize("a  b\n  c");
+        assertEquals(1, tokens.get(0).column());
+        assertEquals(4, tokens.get(1).column());
+        assertEquals(3, tokens.get(2).column());
+        assertEquals(3, tokens.get(3).column()); // EOF
+    }
+
+    @Test
+    @DisplayName("Throws error on various unexpected characters")
+    void testMoreUnexpectedChars() {
+        for (String ch : new String[]{"$", "^", "?", "`"}) {
+            assertThrows(AlpacaCompilerError.class, () -> lexer.tokenize(ch),
+                    "expected lexer error for '" + ch + "'");
+        }
+    }
 }

@@ -566,4 +566,102 @@ class ParserTests {
         AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class, () -> parse("void f() { if x 5; }"));
         assertTrue(e.getMessage().contains("expected ':' or '{'"));
     }
+
+    // ============================================================
+    //  Edge cases
+    // ============================================================
+
+    @Test
+    @DisplayName("Parses the modulo operator with multiplicative precedence")
+    void testModuloOperator() {
+        Block body = parseFunctionBody("int x = 10 % 3;");
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
+        assertEquals(new BinaryOp(new IntLiteral(10), "%", new IntLiteral(3)), decl.initializer().orElseThrow());
+    }
+
+    @Test
+    @DisplayName("Parses nested generic types with array suffixes")
+    void testNestedGenericTypes() {
+        Program program = parse("Array<Array<int>> grid; Array<int>[] rows;");
+        GlobalVariable first = (GlobalVariable) program.declarations().getFirst();
+        assertEquals(new GenericType("Array", List.of(new GenericType("Array", List.of(new NamedType("int"))))),
+                first.type());
+        GlobalVariable second = (GlobalVariable) program.declarations().get(1);
+        assertEquals(new ArrayType(new GenericType("Array", List.of(new NamedType("int")))), second.type());
+    }
+
+    @Test
+    @DisplayName("Rejects unsigned without int or long")
+    void testUnsignedAlone() {
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class, () -> parse("unsigned x;"));
+        assertTrue(e.getMessage().contains("expected 'int' or 'long' after 'unsigned'"));
+    }
+
+    @Test
+    @DisplayName("Parses a constructor with decorators")
+    void testConstructorWithDecorators() {
+        ObjectDeclaration decl = parseObject("""
+                object A {
+                    @docs("Builds an A")
+                    construct(int x) { }
+                }
+                """);
+        ConstructDecl constructor = decl.constructor().orElseThrow();
+        assertEquals(1, constructor.decorators().size());
+        assertInstanceOf(DocsDecorator.class, constructor.decorators().getFirst());
+    }
+
+    @Test
+    @DisplayName("Parses unsafe blocks with nested braces")
+    void testUnsafeNestedBraces() {
+        Block body = parseFunctionBody("""
+                unsafe {
+                    if (x) {
+                        y = 1;
+                    }
+                }
+                """);
+        UnsafeStatement unsafe = (UnsafeStatement) body.statements().getFirst();
+        assertTrue(unsafe.code().contains("if"));
+    }
+
+    @Test
+    @DisplayName("Parses a for loop with all parts empty")
+    void testForLoopEmptyParts() {
+        Block body = parseFunctionBody("for : : { x = 1; }");
+        ForStatement forStmt = (ForStatement) body.statements().getFirst();
+        assertTrue(forStmt.init().isEmpty());
+        assertTrue(forStmt.condition().isEmpty());
+        assertTrue(forStmt.update().isEmpty());
+    }
+
+    @Test
+    @DisplayName("Parses is-check with an array target type")
+    void testIsWithArrayType() {
+        Block body = parseFunctionBody("bool b = x is int[];");
+        LocalVariable decl = (LocalVariable) body.statements().getFirst();
+        IsExpression is = (IsExpression) decl.initializer().orElseThrow();
+        assertEquals(new ArrayType(new NamedType("int")), is.targetType());
+    }
+
+    @Test
+    @DisplayName("Rejects import segments that are keywords")
+    void testImportKeywordSegment() {
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class, () -> parse("import string;"));
+        assertTrue(e.getMessage().contains("expected package or module name after 'import'"));
+    }
+
+    @Test
+    @DisplayName("Rejects an object without a name")
+    void testObjectWithoutName() {
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class, () -> parse("object { }"));
+        assertTrue(e.getMessage().contains("expected object name"));
+    }
+
+    @Test
+    @DisplayName("Rejects a missing closing parenthesis in a call")
+    void testMissingCallParen() {
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class, () -> parse("void f() { g(1; }"));
+        assertTrue(e.getMessage().contains("expected ')' after function arguments"));
+    }
 }

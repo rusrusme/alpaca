@@ -701,7 +701,10 @@ public final class AlpacaParser {
     private int typeLength() {
         TokenType first = peek().type();
         if (first == UNSIGNED) {
-            return 2; // "unsigned int" / "unsigned long"
+            // "unsigned int" / "unsigned long" span two tokens, but "unsigned"
+            // alone is not a type: let the type parser report the better error.
+            return current + 1 < tokens.size()
+                    && (tokens.get(current + 1).type() == INT || tokens.get(current + 1).type() == LONG) ? 2 : 1;
         }
         if (first == LPAR) {
             // Tuple type: "(" Type "," Type { "," Type } ")" - skip balanced parens

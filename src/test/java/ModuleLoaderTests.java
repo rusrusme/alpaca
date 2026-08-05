@@ -103,4 +103,53 @@ class ModuleLoaderTests {
         AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class, () -> resolve("nope"));
         assertTrue(e.getMessage().contains("could not resolve import: 'nope'"));
     }
+
+    @Test
+    @DisplayName("Resolves imports against configured search roots")
+    void testSearchRootFallback() throws IOException {
+        Path root = dir.resolve("roots");
+        Files.createDirectories(root);
+        Files.writeString(root.resolve("extra.alpaca"), "int fromExtra = 1;");
+        write("a.alpaca", "import extra; int fromA = 2;");
+        List<Declaration> declarations =
+                new ModuleLoader(List.of(root)).resolveDependencies(List.of(new Import("extra")), dir);
+        List<String> names = declarationNames(declarations);
+        assertTrue(names.contains("fromExtra"));
+    }
+
+    @Test
+    @DisplayName("Loads a deep import chain")
+    void testDeepImportChain() throws IOException {
+        write("d.alpaca", "int fromD = 4;");
+        write("c.alpaca", "import d; int fromC = 3;");
+        write("b.alpaca", "import c; int fromB = 1;");
+        List<String> names = declarationNames(resolve("b"));
+        assertTrue(names.containsAll(List.of("fromB", "fromC", "fromD")));
+    }
+
+    @Test
+    @DisplayName("Loads a file imported twice by the same module once")
+    void testDuplicateImportInSameFile() throws IOException {
+        write("d.alpaca", "int fromD = 4;");
+        write("a.alpaca", "import d; import d; int fromA = 2;");
+        List<Declaration> declarations = resolve("a");
+        List<String> names = declarationNames(declarations);
+        assertEquals(1, names.stream().filter("fromD"::equals).count());
+    }
+
+    @Test
+    @DisplayName("Reports missing subdirectory imports")
+    void testMissingSubdirImport() throws IOException {
+        write("lib/a.alpaca", "import lib.nope; int fromA = 1;");
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class, () -> resolve("lib.a"));
+        assertTrue(e.getMessage().contains("could not resolve import"));
+    }
+
+    @Test
+    @DisplayName("Propagates syntax errors from imported files")
+    void testSyntaxErrorInImportPropagates() throws IOException {
+        write("bad.alpaca", "int = ;");
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class, () -> resolve("bad"));
+        assertTrue(e.getMessage().contains("syntax error"));
+    }
 }

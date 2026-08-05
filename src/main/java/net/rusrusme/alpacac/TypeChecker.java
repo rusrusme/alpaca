@@ -4,11 +4,7 @@ import net.rusrusme.alpacac.SymbolTable.Kind;
 import net.rusrusme.alpacac.SymbolTable.Symbol;
 import net.rusrusme.alpacac.SyntaxTree.*;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * Type checker for Alpaca (milestone 2). Runs after the SemanticAnalyzer (M1)
@@ -29,6 +25,12 @@ public final class TypeChecker {
     private final Map<String, FunctionDeclaration> functions = new HashMap<>();
     private final Map<String, Map<String, FunctionDeclaration>> methods = new HashMap<>();
     private final Map<String, ConstructDecl> constructors = new HashMap<>();
+
+    /**
+     * All type parameter names declared via {@code @generic} across the program.
+     * Types named after a type parameter are unconstrained until monomorphization.
+     */
+    private final Set<String> typeParams = new HashSet<>();
 
     private String currentObject;
     private Type currentReturnType;
@@ -59,7 +61,10 @@ public final class TypeChecker {
     private void collect(List<Declaration> declarations) {
         for (Declaration declaration : declarations) {
             switch (declaration) {
-                case FunctionDeclaration function -> functions.put(function.name(), function);
+                case FunctionDeclaration function -> {
+                    functions.put(function.name(), function);
+                    typeParams.addAll(typeParameterNames(function.decorators()));
+                }
                 case ObjectDeclaration object -> {
                     Map<String, FunctionDeclaration> objectMethods = new HashMap<>();
                     for (FunctionDeclaration method : object.methods()) {
@@ -67,11 +72,24 @@ public final class TypeChecker {
                     }
                     methods.put(object.name(), objectMethods);
                     object.constructor().ifPresent(constructor -> constructors.put(object.name(), constructor));
+                    typeParams.addAll(typeParameterNames(object.decorators()));
                 }
                 case GlobalVariable _ -> { /* no declaration info needed */ }
                 case StatementDeclaration _ -> { /* rejected in M1 */ }
             }
         }
+    }
+
+    private static List<String> typeParameterNames(List<Decorator> decorators) {
+        for (Decorator decorator : decorators) {
+            if (decorator instanceof GenericDecorator(List<Type> typeParams)) {
+                return typeParams.stream()
+                        .filter(type -> type instanceof NamedType)
+                        .map(type -> ((NamedType) type).name())
+                        .toList();
+            }
+        }
+        return List.of();
     }
 
     // --------------------------------------------------------------------------
@@ -193,12 +211,33 @@ public final class TypeChecker {
     // --------------------------------------------------------------------------
 
     private Type checkExpression(Expression expression) {
+        return checkExpression(expression, null);
+    }
+
+    /**
+     * Checks an expression and returns its type. {@code expectedType} is the
+     * type the surrounding context requires (initializer, assignment target,
+     * argument, return value); it is only consumed by construction calls of
+     * generic objects (expected-type inference, see {@link #checkCall}).
+     * All other expressions ignore it.
+     */
+    private Type checkExpression(Expression expression, Type expectedType) {
         switch (expression) {
-            case IntLiteral _ -> { return new NamedType("int"); }
-            case FloatLiteral _ -> { return new NamedType("float"); }
-            case BoolLiteral _ -> { return new NamedType("bool"); }
-            case CharLiteral _ -> { return new NamedType("char"); }
-            case StringLiteral _ -> { return new NamedType("string"); }
+            case IntLiteral _ -> {
+                return new NamedType("int");
+            }
+            case FloatLiteral _ -> {
+                return new NamedType("float");
+            }
+            case BoolLiteral _ -> {
+                return new NamedType("bool");
+            }
+            case CharLiteral _ -> {
+                return new NamedType("char");
+            }
+            case StringLiteral _ -> {
+                return new NamedType("string");
+            }
             case Identifier identifier -> {
                 Symbol symbol = resolved.get(identifier);
                 if (symbol == null || symbol.type() == null) {
@@ -206,7 +245,8 @@ public final class TypeChecker {
                 }
                 return symbol.type();
             }
-            case ThisExpression _ -> throw new AlpacaCompilerError("'this' can only be used with member access (this.field)");
+            case ThisExpression _ ->
+                    throw new AlpacaCompilerError("'this' can only be used with member access (this.field)");
             case UnaryOp unary -> {
                 Type operandType = checkExpression(unary.operand());
                 switch (unary.operator()) {
@@ -258,7 +298,9 @@ public final class TypeChecker {
                     default -> throw new AlpacaCompilerError("unknown binary operator '" + binary.operator() + "'");
                 }
             }
-            case FunctionCall call -> { return checkCall(call); }
+            case FunctionCall call -> {
+                return checkCall(call, expectedType);
+            }
             case TupleExpression tuple -> {
                 List<Type> elementTypes = new ArrayList<>();
                 for (Expression element : tuple.elements()) {
@@ -268,6 +310,10 @@ public final class TypeChecker {
             }
             case ArrayLiteral array -> {
                 if (array.elements().isEmpty()) {
+                    // int[] a = {}; - the expected type supplies the element type.
+                    if (expectedType instanceof ArrayType) {
+                        return expectedType;
+                    }
                     throw new AlpacaCompilerError("cannot infer the element type of an empty array literal");
                 }
                 Type elementType = checkExpression(array.elements().getFirst());
@@ -276,7 +322,9 @@ public final class TypeChecker {
                 }
                 return new ArrayType(elementType);
             }
-            case MemberAccess memberAccess -> { return checkMemberAccess(memberAccess); }
+            case MemberAccess memberAccess -> {
+                return checkMemberAccess(memberAccess);
+            }
             case IsExpression isExpression -> {
                 checkExpression(isExpression.expression());
                 return new NamedType("bool");
@@ -300,7 +348,7 @@ public final class TypeChecker {
         }
     }
 
-    private Type checkCall(FunctionCall call) {
+    private Type checkCall(FunctionCall call, Type expectedType) {
         switch (call.callee()) {
             case Identifier identifier -> {
                 Symbol symbol = symbols.lookup(identifier.name());
@@ -313,6 +361,14 @@ public final class TypeChecker {
                     ConstructDecl constructor = constructors.get(identifier.name());
                     if (constructor != null) {
                         checkArguments(call, constructor.parameters(), identifier.name());
+                    }
+                    // Expected-type inference for generic objects:
+                    // Array<int> arr = Array("Hi"); types the call as Array<int>.
+                    // A mismatching base name falls through to the raw object type.
+                    if (expectedType instanceof GenericType(
+                            String base, List<Type> args
+                    ) && base.equals(identifier.name())) {
+                        return expectedType;
                     }
                     return new NamedType(identifier.name());
                 }
@@ -425,7 +481,9 @@ public final class TypeChecker {
     // Type compatibility helpers
     // --------------------------------------------------------------------------
 
-    /** All numeric types with their widening rank (assigning rank A to rank E requires A <= E). */
+    /**
+     * All numeric types with their widening rank (assigning rank A to rank E requires A <= E).
+     */
     private static final Map<String, Integer> NUMERIC_RANK = Map.of(
             "int", 0,
             "unsigned int", 1,
@@ -434,8 +492,27 @@ public final class TypeChecker {
             "float", 4,
             "double", 5);
 
-    private static boolean assignable(Type actual, Type expected) {
+    private boolean assignable(Type actual, Type expected) {
         if (Objects.equals(actual, expected)) {
+            return true;
+        }
+        // Type parameters are unconstrained until monomorphization: E accepts
+        // any value, and a value of type E is assignable to any target type.
+        // The monomorphizer performs the concrete checks.
+        if (isTypeParameter(actual) || isTypeParameter(expected)) {
+            return true;
+        }
+        // Generic types with the same base are compatible argument-wise; type
+        // parameters nested inside (e.g. Optional<E>) are unconstrained the
+        // same way. Concrete mismatches (Array<int> vs Array<string>) stay errors.
+        if (actual instanceof GenericType(String baseA, List<Type> argsA)
+                && expected instanceof GenericType(String baseB, List<Type> argsB)
+                && baseA.equals(baseB) && argsA.size() == argsB.size()) {
+            for (int i = 0; i < argsA.size(); i++) {
+                if (!assignable(argsA.get(i), argsB.get(i))) {
+                    return false;
+                }
+            }
             return true;
         }
         // Numeric widening only (narrowing stays an error)
@@ -444,8 +521,12 @@ public final class TypeChecker {
         return actualRank >= 0 && expectedRank >= 0 && actualRank <= expectedRank;
     }
 
+    private boolean isTypeParameter(Type type) {
+        return type instanceof NamedType(String name) && typeParams.contains(name);
+    }
+
     private void requireAssignable(Expression actualExpr, Type expected, String context) {
-        Type actual = checkExpression(actualExpr);
+        Type actual = checkExpression(actualExpr, expected);
         checkUnsignedValue(actualExpr, expected, context);
         if (!assignable(actual, expected)) {
             throw new AlpacaCompilerError("type mismatch: cannot assign " + typeName(actual)

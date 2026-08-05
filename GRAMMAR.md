@@ -245,7 +245,9 @@ as `alpaca: compiler error: ...`.
   visibility is either explicit (`public construct`, `private construct`) or
   inherited from the object; a private constructor is only accessible from
   inside the declaring object. Arity and argument types are checked by the
-  type checker; the call's type is the object type.
+  type checker; the call's type is the object type (for generic objects the
+  call takes the expected type of the surrounding context when the base name
+  matches, e.g. `Array<int> arr = Array("Hi");`).
 - Member access (`obj.member`) resolves against the declared type of the
   receiver when that type is a known object. Receivers whose type is not
   statically known (e.g. call results) are checked by the type checker.

@@ -115,6 +115,7 @@ public final class AlpacaLexer {
             }
             case '*' -> addToken(STAR);
             case '/' -> addToken(SLASH);
+            case '%' -> addToken(PERCENT);
             // -----------------------
             case '&' -> {
                 if (match('&')) {

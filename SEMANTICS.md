@@ -87,7 +87,13 @@ values.
   `this` and implicit field access work. It behaves like a `void` function:
   `return;` is allowed, returning a value is an error.
 - Arity and argument types are validated by the type checker against the
-  constructor's parameters; the call's type is the object type.
+  constructor's parameters. The call's type is the object type; for generic
+  objects the type checker applies **expected-type inference**: when the call
+  is assigned to, returned as, or passed as a generic type with the same base
+  name, the call takes that type (`Array<int> arr = Array("Hi");` types the
+  call as `Array<int>`). Without a matching expected type the call types as
+  the raw object name (`Array`). Argument-driven inference (`E` deduced from
+  the arguments) is a later milestone together with the monomorphizer.
 - Internally the constructor occupies the member name `construct`, so a
   field or method named `construct` collides with it (duplicate member
   error) - but `construct` is not a reserved word: `construct x;` is a field
@@ -133,6 +139,12 @@ The analyzer rejects:
 - assignment compatibility: exact type match or numeric widening along the
   rank chain `int < unsigned int < long < unsigned long < float < double`;
   narrowing is rejected (`double -> float`, `long -> int`, `unsigned -> int`)
+- **type parameters** (declared via `@generic`) are unconstrained in this
+  milestone: a value of type `E` is assignable to any type, and any value is
+  assignable to `E` - including nested occurrences (`Optional<E>` is
+  assignable to `Optional<int>`). Concrete mismatches (`Array<int>` vs
+  `Array<string>`) remain errors. The monomorphizer performs the concrete
+  checks
 - unsigned types (`unsigned int`, `unsigned long`) reject statically negative
   constant values: `unsigned int x = -1;` is an error; non-constant values
   are a runtime concern, as in C
