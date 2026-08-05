@@ -548,6 +548,9 @@ public final class AlpacaParser {
         if (match(IDENTIFIER)) {
             return new Identifier(previous().lexeme());
         }
+        if (match(THIS)) {
+            return new ThisExpression();
+        }
         // Array literal: "{" (Expression ("," Expression)*)? "}"
         if (match(LBRACE)) {
             List<Expression> elements = new ArrayList<>();

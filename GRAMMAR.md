@@ -153,7 +153,10 @@ BaseExpr            ::= Literal
                       | Identifier
                       | TupleLiteral
                       | ArrayLiteral
+                      | ThisExpr
                       | "(" Expression ")" ;
+
+ThisExpr            ::= "this" ;
 
 PostfixSuffix       ::= MemberAccess | CallExpr | PostfixOp ;
 MemberAccess        ::= "." Identifier ;
@@ -186,3 +189,58 @@ Digit               ::= "0".."9" ;
 
 Comment ::= "#" { ^( "\n" | "\r" ) } ;
 ```
+
+---
+
+## 8. Semantic Rules (Static Analysis)
+
+Implemented in milestone 1 of the semantic analyzer (scope resolution).
+Semantic errors are reported as `alpaca: compiler error: <message>`; they do
+not carry line/column information yet (the AST does not store source positions).
+
+> See **SEMANTICS.md** for the full semantic reference (symbols, scopes,
+> resolution order, `this`, write/read ambiguity, intentional gaps).
+
+### Names & Scopes
+
+- Top-level declarations (objects, functions, global variables) share a single
+  namespace: no two top-level names may be equal.
+- Object members (fields and methods) share a namespace per object: no two
+  members of the same object may be equal.
+- Function parameters must be unique; local variables must be unique within
+  their block scope. Shadowing an outer name in an inner block is allowed.
+- `@generic` type parameters must be unique within the declaration.
+- Top-level statements are not allowed (parser enforces this).
+
+### Resolution
+
+- A variable reference (identifier in an expression) must resolve to a
+  parameter, a local variable, or a global variable. Function and object names
+  cannot be used as values.
+- Inside an object (field initializers and method bodies), an unqualified name
+  that is not a parameter, local variable, or global resolves to a field of
+  that object (implicit field access).
+- `this` refers to the enclosing object and is only valid inside an object, and
+  only as the receiver of a member access (`this.field`). `this.member` always
+  resolves to a member of the current object; an unknown member is an error.
+  Using `this` as a value is an error.
+- A bare name that resolves to a variable while a field of the same name exists
+  is only ambiguous on writes (`name = ...`, `name++`, `name--`): the compiler
+  rejects it and requires `this.name` for the field. Reads prefer the variable.
+- A call with a plain identifier callee must resolve to a function; a call with
+  a member callee must resolve to a method of the receiver's object type.
+- Member access (`obj.member`) resolves against the declared type of the
+  receiver when that type is a known object. Receivers whose type is not
+  statically known (e.g. call results) are checked by the type checker.
+
+### Visibility
+
+- `private` members (the default, see `VisibilityModifier`) may only be
+  accessed from inside the declaring object, i.e. from field initializers and
+  method bodies of that object.
+
+### Constants
+
+- `@const` names (global variables and object fields) may not be assigned to,
+  incremented, or decremented. Initialization at the declaration site is the
+  only allowed write.

@@ -33,6 +33,7 @@ public final class AlpacaLexer {
         KEYWORDS.put("case", CASE);
         KEYWORDS.put("default", DEFAULT);
         KEYWORDS.put("import", IMPORT);
+        KEYWORDS.put("this", THIS);
 
         // Primitive types
         KEYWORDS.put("void", VOID);

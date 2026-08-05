@@ -193,7 +193,7 @@ class LexerTests {
     @Test
     @DisplayName("Tokenizes all keywords")
     void testKeywords() {
-        assertTokens("if else for while do return unsafe is object public private switch case default", List.of(
+        assertTokens("if else for while do return unsafe is object public private switch case default this", List.of(
                 token(IF, "if"),
                 token(ELSE, "else"),
                 token(FOR, "for"),
@@ -208,6 +208,7 @@ class LexerTests {
                 token(SWITCH, "switch"),
                 token(CASE, "case"),
                 token(DEFAULT, "default"),
+                token(THIS, "this"),
                 eof()
         ));
     }

@@ -14,6 +14,7 @@ public enum TokenType {
     BREAK, CONTINUE,
     PUBLIC, PRIVATE,
     IMPORT,
+    THIS, // Misc
 
     // Primitive Types
     VOID, INT, UNSIGNED, LONG,
@@ -55,6 +56,5 @@ public enum TokenType {
     // Comments
     HASH, // `#`
 
-    // Misc
     EOF
 }

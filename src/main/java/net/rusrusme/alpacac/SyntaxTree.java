@@ -215,7 +215,8 @@ public final class SyntaxTree {
             MemberAccess,
             IsExpression,
             IndexAccess,
-            PostfixOp {}
+            PostfixOp,
+            ThisExpression {}
 
     /**
      * Literals represent constant values in the code, such as integers, floats, booleans, characters, and strings.
@@ -270,6 +271,13 @@ public final class SyntaxTree {
      * @param operand  The expression being incremented or decremented.
      */
     public record PostfixOp(String operator, Expression operand) implements Expression {}
+
+    /**
+     * {@code this} refers to the enclosing object inside a method body or field
+     * initializer. It is only valid as the receiver of a member access
+     * ({@code this.field}); using it as a value is a semantic error.
+     */
+    public record ThisExpression() implements Expression {}
 
     /**
      * Types represent the data types of variables, function return values, and other expressions.

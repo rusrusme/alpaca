@@ -466,6 +466,16 @@ class ParserTests {
     }
 
     @Test
+    @DisplayName("Parses 'this' as a member access receiver")
+    void testThisExpression() {
+        Block body = parseFunctionBody("this.age = 5;");
+        Assignment assignment = (Assignment) body.statements().getFirst();
+        MemberAccess member = (MemberAccess) assignment.target();
+        assertEquals(new ThisExpression(), member.object());
+        assertEquals("age", member.member());
+    }
+
+    @Test
     @DisplayName("Generic functions are called without type arguments")
     void testGenericCallWithoutTypeArgs() {
         Block body = parseFunctionBody("print(10);");

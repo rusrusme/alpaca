@@ -69,6 +69,9 @@ public final class Execute {
                     mergedDeclarations
             );
 
+            SemanticAnalyzer analyzer = new SemanticAnalyzer();
+            analyzer.analyze(programWithDeps);
+
             System.out.println(programWithDeps);
 
 //            monomorphizer = new LamaMonomorphizer();
