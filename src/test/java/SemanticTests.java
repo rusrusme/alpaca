@@ -2,8 +2,16 @@ import net.rusrusme.alpacac.AlpacaCompilerError;
 import net.rusrusme.alpacac.AlpacaLexer;
 import net.rusrusme.alpacac.AlpacaParser;
 import net.rusrusme.alpacac.SemanticAnalyzer;
+import net.rusrusme.alpacac.SyntaxTree.Declaration;
+import net.rusrusme.alpacac.SyntaxTree.Program;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -466,5 +474,25 @@ class SemanticTests {
     void testInvalidAssignmentTarget() {
         AlpacaCompilerError e = analyzeError("void g() {} void f() { g() = 5; }");
         assertTrue(e.getMessage().contains("invalid assignment target"));
+    }
+
+    // ============================================================
+    //  Bundled stdlib integration
+    // ============================================================
+
+    @Test
+    @DisplayName("Analyzes every bundled stdlib module without errors")
+    void testBundledStdlibAnalyzes() throws IOException {
+        Path libDir = Path.of("src/main/java/net/rusrusme/alpaca/runtime/lib");
+        List<Declaration> declarations = new ArrayList<>();
+        try (var stream = Files.walk(libDir)) {
+            for (Path file : stream.filter(path -> path.toString().endsWith(".alpaca")).toList()) {
+                Program program = new AlpacaParser(file.getFileName().toString(),
+                        new AlpacaLexer().tokenize(Files.readString(file))).construct();
+                declarations.addAll(program.declarations());
+            }
+        }
+        assertFalse(declarations.isEmpty(), "no stdlib modules found");
+        new SemanticAnalyzer().analyze(new Program("stdlib", List.of(), declarations));
     }
 }
