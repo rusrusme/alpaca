@@ -7,16 +7,21 @@ import net.rusrusme.alpacac.SyntaxTree.Declaration;
 import net.rusrusme.alpacac.SyntaxTree.Import;
 import net.rusrusme.alpacac.SyntaxTree.Program;
 import net.rusrusme.alpacac.TypeChecker;
+import net.rusrusme.alpaca.runtime.core.Execute;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.OutputStream;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * End-to-end integration tests: the full pipeline (lex, parse, resolve imports
@@ -180,5 +185,25 @@ class IntegrationTests {
                 void run() { }
                 """);
         assertTrue(e.getMessage().contains("could not resolve import"));
+    }
+
+    @Test
+    @DisplayName("Runs the monomorphizing pipeline through Execute.run")
+    void testExecuteRunsMonomorphizedPipeline() {
+        Assumptions.assumeTrue(Files.isDirectory(LIB_DIR), "bundled stdlib not present; skipping");
+        Assumptions.assumeTrue(Files.exists(Path.of("stdlib_demo.alpaca")), "demo file not present; skipping");
+        PrintStream originalOut = System.out;
+        System.setOut(new PrintStream(OutputStream.nullOutputStream()));
+        try {
+            // Success path: lex, parse, import merge, M1, M2, monomorphize, and
+            // re-analyze the concrete program, then execute it. run() throws on
+            // failure instead of exiting the JVM, so a broken pipeline surfaces
+            // as a normal test failure instead of killing the test worker.
+            assertDoesNotThrow(() -> Execute.run(Path.of("stdlib_demo.alpaca")),
+                    "pipeline must run stdlib_demo.alpaca end-to-end");
+        }
+        finally {
+            System.setOut(originalOut);
+        }
     }
 }

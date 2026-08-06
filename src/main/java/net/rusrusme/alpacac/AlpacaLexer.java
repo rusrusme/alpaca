@@ -56,6 +56,7 @@ public final class AlpacaLexer {
     private int current;
     private int line;
     private int column;
+    private TokenType lastTokenType;
 
     public AlpacaLexer() {
     }
@@ -91,7 +92,16 @@ public final class AlpacaLexer {
             // -----------------------
             case '(' -> addToken(LPAR);
             case ')' -> addToken(RPAR);
-            case '{' -> addToken(LBRACE);
+            case '{' -> {
+                if (lastTokenType == UNSAFE) {
+                    // unsafe { ... } bodies are raw C: read them verbatim into a
+                    // single UNSAFE_CODE token instead of lexing Alpaca tokens.
+                    unsafeBlock();
+                }
+                else {
+                    addToken(LBRACE);
+                }
+            }
             case '}' -> addToken(RBRACE);
             case '[' -> addToken(LBRACKET);
             case ']' -> addToken(RBRACKET);
@@ -163,6 +173,115 @@ public final class AlpacaLexer {
                 else {
                     throw new AlpacaCompilerError("syntax error: unexpected character '" + c, line, column);
                 }
+            }
+        }
+    }
+
+    /**
+     * Reads the body of an {@code unsafe { ... }} block verbatim as raw C.
+     * The opening '{' has already been consumed by the caller; braces are
+     * matched by depth, while string/char literals and C comments are skipped
+     * so that a '}' inside them does not close the block early.
+     */
+    private void unsafeBlock() {
+        int depth = 1;
+        int bodyStart = current;
+        while (!isAtEnd() && depth > 0) {
+            char c = advance();
+            switch (c) {
+                case '{' -> depth++;
+                case '}' -> depth--;
+                case '"' -> skipRawString();
+                case '\'' -> skipRawChar();
+                case '/' -> {
+                    if (peek() == '/') {
+                        skipRawLineComment();
+                    }
+                    else if (peek() == '*') {
+                        skipRawBlockComment();
+                    }
+                }
+                case '\n' -> {
+                    line++;
+                    column = 0;
+                }
+                default -> { /* raw C character */ }
+            }
+        }
+        if (depth != 0) {
+            throw new AlpacaCompilerError("syntax error: unterminated unsafe block", line, column);
+        }
+        // current points just past the closing '}', so the body ends at current - 1.
+        String body = sourceCode.substring(bodyStart, current - 1);
+        addToken(UNSAFE_CODE, body);
+    }
+
+    /**
+     * Skips a raw C string literal, honouring backslash escapes. The opening
+     * quote has already been consumed by the caller.
+     */
+    private void skipRawString() {
+        while (!isAtEnd()) {
+            char c = advance();
+            if (c == '\\' && !isAtEnd()) {
+                advance(); // escaped character
+            }
+            else if (c == '"') {
+                return;
+            }
+            else if (c == '\n') {
+                line++;
+                column = 0;
+            }
+        }
+    }
+
+    /**
+     * Skips a raw C character literal, honouring backslash escapes. The opening
+     * quote has already been consumed by the caller.
+     */
+    private void skipRawChar() {
+        while (!isAtEnd()) {
+            char c = advance();
+            if (c == '\\' && !isAtEnd()) {
+                advance(); // escaped character
+            }
+            else if (c == '\'') {
+                return;
+            }
+            else if (c == '\n') {
+                line++;
+                column = 0;
+            }
+        }
+    }
+
+    /**
+     * Skips a raw C line comment ({@code // ...}). The two slashes have already
+     * been consumed; the trailing newline is left for the caller to handle.
+     */
+    private void skipRawLineComment() {
+        while (!isAtEnd() && peek() != '\n') {
+            advance();
+        }
+    }
+
+    /**
+     * Skips a raw C block comment ({@code /* ... *&#47;}). The opening '/' has
+     * already been consumed by the caller.
+     */
+    private void skipRawBlockComment() {
+        if (isAtEnd()) return;
+        advance(); // consume the '*'
+        while (!isAtEnd()) {
+            char c = advance();
+            if (c == '\n') {
+                line++;
+                column = 0;
+            }
+            else if (c == '*' && peek() == '/') {
+                advance(); // consume the closing '/'
+                return;
             }
         }
     }
@@ -402,5 +521,6 @@ public final class AlpacaLexer {
         String text = sourceCode.substring(start, current);
         int startColumn = column - text.length() + 1;
         tokens.add(new Token(type, text, literal, line, startColumn));
+        lastTokenType = type;
     }
 }

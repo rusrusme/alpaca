@@ -8,6 +8,7 @@ public enum TokenType {
     FOR,
     DO, WHILE,
     UNSAFE,
+    UNSAFE_CODE, // raw C body of an unsafe block, read verbatim by the lexer
     AT, // `@`
     IS,
     RETURN,

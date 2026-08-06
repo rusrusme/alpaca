@@ -20,7 +20,25 @@ public final class Execute {
         }
         // args[0] is the entry point file; its transitive imports are lexed and
         // parsed concurrently by ModuleLoader.
-        run(Path.of(args[0]));
+        try {
+            run(Path.of(args[0]));
+        }
+        catch (AlpacaCompilerError e) {
+            System.err.println("alpaca: compiler error: " + e.getMessage());
+            System.exit(0);
+        }
+        catch (AlpacaRuntimeException e) {
+            System.err.println("alpaca: runtime exception: " + e.getMessage());
+            System.exit(0);
+        }
+        catch (IOException e) {
+            System.err.println("alpaca: I/O error: " + e.getMessage());
+            System.exit(0);
+        }
+        catch (InterruptedException e) {
+            System.err.println("alpaca: interpreter error " + e.getMessage());
+            System.exit(0);
+        }
     }
 
     /**
@@ -33,65 +51,68 @@ public final class Execute {
         return Files.isDirectory(stdlib) ? List.of(stdlib) : List.of();
     }
 
-    public static void run(Path filePath) {
-        try {
-            Path absolutePath = filePath.toAbsolutePath().normalize();
-            String sourceCode = Files.readString(absolutePath);
+    /**
+     * Runs the full pipeline for the given entry-point file: lex, parse, import
+     * merge, M1, M2, monomorphize, re-analyze the concrete program, and execute
+     * it. Failures propagate to the caller — only {@link #main(String[])} turns
+     * them into exit codes, so library callers (e.g. tests) never kill the JVM.
+     */
+    public static void run(Path filePath) throws IOException, InterruptedException {
+        Path absolutePath = filePath.toAbsolutePath().normalize();
+        String sourceCode = Files.readString(absolutePath);
 
-            // Lex and Parse the main file
-            AlpacaLexer lexer = new AlpacaLexer();
-            List<Token> tokens = lexer.tokenize(sourceCode);
+        // Lex and Parse the main file
+        AlpacaLexer lexer = new AlpacaLexer();
+        List<Token> tokens = lexer.tokenize(sourceCode);
 
-            AlpacaParser parser = new AlpacaParser(absolutePath.getFileName().toString(), tokens);
-            Program mainProgram = parser.construct();
+        AlpacaParser parser = new AlpacaParser(absolutePath.getFileName().toString(), tokens);
+        Program mainProgram = parser.construct();
 
-            // Resolve imported dependencies (lexed and parsed concurrently)
-            List<Declaration> mergedDeclarations = new ArrayList<>();
-            if (!mainProgram.imports().isEmpty()) {
-                ModuleLoader loader = new ModuleLoader(stdlibSearchRoots());
-                List<Declaration> dependencies = loader.resolveDependencies(
-                        mainProgram.imports(),
-                        absolutePath.getParent()
-                );
-                mergedDeclarations.addAll(dependencies);
-            }
-
-            // Combine dependencies with main program declarations
-            mergedDeclarations.addAll(mainProgram.declarations());
-
-            // Final unified program ready for semantic analysis
-            Program programWithDeps = new Program(
-                    mainProgram.name(),
-                    List.of(),
-                    mergedDeclarations
+        // Resolve imported dependencies (lexed and parsed concurrently)
+        List<Declaration> mergedDeclarations = new ArrayList<>();
+        if (!mainProgram.imports().isEmpty()) {
+            ModuleLoader loader = new ModuleLoader(stdlibSearchRoots());
+            List<Declaration> dependencies = loader.resolveDependencies(
+                    mainProgram.imports(),
+                    absolutePath.getParent()
             );
-
-            SemanticAnalyzer analyzer = new SemanticAnalyzer();
-            analyzer.analyze(programWithDeps);
-
-            TypeChecker typeChecker = new TypeChecker(analyzer.symbolTable(), analyzer.resolvedSymbols());
-            typeChecker.check(programWithDeps);
-
-            System.out.println(programWithDeps);
-
-//            monomorphizer = new LamaMonomorphizer();
-//            concreteDeclarations = monomorphizer.process(declarations);
-
-//            typeChecker.check(concreteDeclarations);
-
-//            interpreter.execute(concreteDeclarations);
+            mergedDeclarations.addAll(dependencies);
         }
-        catch (AlpacaCompilerError error) {
-            System.err.println("alpaca: compiler error: " + error.getMessage());
-            System.exit(0);
-        }
-        catch (AlpacaRuntimeException exception) {
-            System.err.println("alpaca: runtime exception: " + exception.getMessage());
-            System.exit(0);
-        }
-        catch (IOException e) {
-            System.err.println("alpaca: I/O error: " + e.getMessage());
-            System.exit(0);
-        }
+
+        // Combine dependencies with main program declarations
+        mergedDeclarations.addAll(mainProgram.declarations());
+
+        // Final unified program ready for semantic analysis
+        Program programWithDeps = new Program(
+                mainProgram.name(),
+                List.of(),
+                mergedDeclarations
+        );
+
+        SemanticAnalyzer analyzer = new SemanticAnalyzer();
+        analyzer.analyze(programWithDeps);
+
+        TypeChecker typeChecker = new TypeChecker(analyzer.symbolTable(), analyzer.resolvedSymbols());
+        typeChecker.check(programWithDeps);
+
+        // Monomorphize (milestone 3): generic functions and objects become
+        // concrete clones with mangled names; the output is generic-free.
+        Monomorphizer monomorphizer = new Monomorphizer(
+                analyzer.symbolTable(), analyzer.resolvedSymbols(), typeChecker.expressionTypes());
+        Program concreteProgram = monomorphizer.process(programWithDeps);
+
+        // Re-analyze the concrete program: with no type parameters left, the
+        // lax type rules never fire, so this is a strict verification of the
+        // monomorphizer's output. The C emitter (milestone 4) consumes the
+        // concrete program and the fresh resolution maps.
+        SemanticAnalyzer concreteAnalyzer = new SemanticAnalyzer();
+        concreteAnalyzer.analyze(concreteProgram);
+        new TypeChecker(concreteAnalyzer.symbolTable(), concreteAnalyzer.resolvedSymbols())
+                .check(concreteProgram);
+
+        System.out.println(concreteProgram);
+        // Run the program
+        AlpacaInterpreter interpreter = new AlpacaInterpreter(concreteProgram);
+//        interpreter.execute();
     }
 }

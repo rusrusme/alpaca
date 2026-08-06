@@ -1,8 +1,15 @@
 import net.rusrusme.alpacac.*;
-import net.rusrusme.alpacac.SyntaxTree.Program;
+import net.rusrusme.alpacac.SyntaxTree.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Predicate;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -845,5 +852,250 @@ class TypeCheckerTests {
     void testIncompatibleComparison() {
         AlpacaCompilerError e = analyzeError("void f() { bool b = \"a\" == 1; }");
         assertTrue(e.getMessage().contains("cannot compare string with int"));
+    }
+
+    // ============================================================
+    //  expressionTypes() (milestone 3.1: monomorphizer input)
+    // ============================================================
+
+    private record Checked(Program program, TypeChecker checker) {}
+
+    private Checked checked(String source) {
+        Program program = parse(source);
+        SemanticAnalyzer analyzer = new SemanticAnalyzer();
+        analyzer.analyze(program);
+        TypeChecker checker = new TypeChecker(analyzer.symbolTable(), analyzer.resolvedSymbols());
+        checker.check(program);
+        return new Checked(program, checker);
+    }
+
+    /**
+     * Collects every expression the type checker inspects: statement trees are
+     * walked recursively, call callees are skipped (the checker resolves them
+     * via the symbol table instead of typing them).
+     */
+    private static List<Expression> expressions(Program program, Predicate<Expression> filter) {
+        List<Expression> result = new ArrayList<>();
+        for (Declaration declaration : program.declarations()) {
+            if (declaration instanceof FunctionDeclaration function) {
+                function.body().ifPresent(body -> collectStatement(body, filter, result));
+            }
+        }
+        return result;
+    }
+
+    private static void collectStatement(Statement statement, Predicate<Expression> filter, List<Expression> out) {
+        switch (statement) {
+            case Block block -> block.statements().forEach(s -> collectStatement(s, filter, out));
+            case IfStatement ifs -> {
+                collectExpression(ifs.condition(), filter, out);
+                collectStatement(ifs.thenBranch(), filter, out);
+                ifs.elseBranch().ifPresent(s -> collectStatement(s, filter, out));
+            }
+            case WhileStatement whileStatement -> {
+                collectExpression(whileStatement.condition(), filter, out);
+                collectStatement(whileStatement.body(), filter, out);
+            }
+            case DoWhileStatement doWhileStatement -> {
+                collectStatement(doWhileStatement.body(), filter, out);
+                collectExpression(doWhileStatement.condition(), filter, out);
+            }
+            case ForStatement forStatement -> {
+                forStatement.init().ifPresent(s -> collectSimpleStatement(s, filter, out));
+                forStatement.condition().ifPresent(e -> collectExpression(e, filter, out));
+                forStatement.update().ifPresent(s -> collectSimpleStatement(s, filter, out));
+                collectStatement(forStatement.body(), filter, out);
+            }
+            case SwitchStatement switchStatement -> {
+                collectExpression(switchStatement.selector(), filter, out);
+                for (SwitchCase switchCase : switchStatement.cases()) {
+                    if (switchCase.label() != null) {
+                        collectExpression(switchCase.label(), filter, out);
+                    }
+                    collectStatement(switchCase.body(), filter, out);
+                }
+            }
+            case SimpleStatement simple -> collectSimpleStatement(simple, filter, out);
+        }
+    }
+
+    private static void collectSimpleStatement(SimpleStatement statement, Predicate<Expression> filter, List<Expression> out) {
+        switch (statement) {
+            case LocalVariable local -> local.initializer().ifPresent(init -> collectExpression(init, filter, out));
+            case Assignment assignment -> {
+                collectExpression(assignment.target(), filter, out);
+                collectExpression(assignment.value(), filter, out);
+            }
+            case ExpressionStatement expressionStatement -> collectExpression(expressionStatement.expression(), filter, out);
+            case ReturnStatement returnStatement -> returnStatement.value().ifPresent(value -> collectExpression(value, filter, out));
+            default -> { /* Unsafe/Break/Continue carry no expressions */ }
+        }
+    }
+
+    private static void collectExpression(Expression expression, Predicate<Expression> filter, List<Expression> out) {
+        if (filter.test(expression)) {
+            out.add(expression);
+        }
+        switch (expression) {
+            case UnaryOp unary -> collectExpression(unary.operand(), filter, out);
+            case BinaryOp binary -> {
+                collectExpression(binary.left(), filter, out);
+                collectExpression(binary.right(), filter, out);
+            }
+            case FunctionCall call -> call.arguments().forEach(argument -> collectExpression(argument, filter, out));
+            case TupleExpression tuple -> tuple.elements().forEach(element -> collectExpression(element, filter, out));
+            case ArrayLiteral array -> array.elements().forEach(element -> collectExpression(element, filter, out));
+            case MemberAccess memberAccess -> collectExpression(memberAccess.object(), filter, out);
+            case IsExpression isExpression -> collectExpression(isExpression.expression(), filter, out);
+            case IndexAccess indexAccess -> {
+                collectExpression(indexAccess.array(), filter, out);
+                collectExpression(indexAccess.index(), filter, out);
+            }
+            case PostfixOp postfix -> collectExpression(postfix.operand(), filter, out);
+            default -> { /* literals, identifiers, this */ }
+        }
+    }
+
+    @Test
+    @DisplayName("Records a type for every checked expression in object-free code")
+    void testEveryExpressionRecorded() {
+        Checked c = checked("""
+                void f() {
+                    int x = 1 + 2 * 3;
+                    float g = 1.5 + x;
+                    bool b = x > 1 && true;
+                    string s = "a" + "b";
+                    int[] arr = {1, 2, 3};
+                    int y = arr[0];
+                }
+                """);
+        List<Expression> collected = expressions(c.program(), e -> true);
+        assertFalse(collected.isEmpty());
+        for (Expression expression : collected) {
+            assertTrue(c.checker().expressionTypes().containsKey(expression),
+                    "no type recorded for expression " + expression);
+        }
+    }
+
+    @Test
+    @DisplayName("Records literal, operator result and concatenation types")
+    void testExpressionTypesBasic() {
+        Checked c = checked("""
+                void f() {
+                    int x = 1 + 2;
+                    string s = "a" + "b";
+                    bool b = x < 5;
+                }
+                """);
+        Map<Expression, Type> types = c.checker().expressionTypes();
+
+        BinaryOp sum = (BinaryOp) expressions(c.program(), e -> e instanceof BinaryOp
+                && ((BinaryOp) e).operator().equals("+")
+                && ((BinaryOp) e).left() instanceof IntLiteral).getFirst();
+        assertEquals(new NamedType("int"), types.get(sum));
+
+        BinaryOp concat = (BinaryOp) expressions(c.program(), e -> e instanceof BinaryOp
+                && ((BinaryOp) e).operator().equals("+")
+                && ((BinaryOp) e).left() instanceof StringLiteral).getFirst();
+        assertEquals(new NamedType("string"), types.get(concat));
+
+        BinaryOp comparison = (BinaryOp) expressions(c.program(), e -> e instanceof BinaryOp
+                && ((BinaryOp) e).operator().equals("<")).getFirst();
+        assertEquals(new NamedType("bool"), types.get(comparison));
+    }
+
+    @Test
+    @DisplayName("Records the inferred generic type of a construction call")
+    void testConstructionCallTypeRecorded() {
+        Checked c = checked("""
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    public construct(int length) { }
+                }
+                void f() {
+                    Array<int> arr = Array(10);
+                }
+                """);
+        FunctionCall call = (FunctionCall) expressions(c.program(), e -> e instanceof FunctionCall).getFirst();
+        Type type = c.checker().expressionTypes().get(call);
+        assertTrue(type instanceof GenericType(String base, List<Type> args)
+                        && base.equals("Array")
+                        && args.size() == 1
+                        && args.getFirst().equals(new NamedType("int")),
+                "expected Array<int>, got " + type);
+    }
+
+    @Test
+    @DisplayName("Records the receiver type of a method call on a generic object")
+    void testMethodCallReceiverTypeRecorded() {
+        Checked c = checked("""
+                @generic(E)
+                public object Array {
+                    E[] data;
+                    public construct(int length) { }
+                    public void add(E element) { }
+                }
+                void f() {
+                    Array<int> arr = Array(10);
+                    arr.add(5);
+                }
+                """);
+        FunctionCall call = (FunctionCall) expressions(c.program(), e -> e instanceof FunctionCall
+                && ((FunctionCall) e).callee() instanceof MemberAccess
+                && ((MemberAccess) ((FunctionCall) e).callee()).member().equals("add")).getFirst();
+        Expression receiver = ((MemberAccess) call.callee()).object();
+        assertEquals(new GenericType("Array", List.of(new NamedType("int"))),
+                c.checker().expressionTypes().get(receiver));
+        // The call itself returns void, like the add method.
+        assertEquals(new NamedType("void"), c.checker().expressionTypes().get(call));
+    }
+
+    @Test
+    @DisplayName("Records the type of a member access on a call result")
+    void testMemberAccessOnCallResultTypeRecorded() {
+        Checked c = checked("""
+                object House {
+                    public int price;
+                }
+                House get_house() {
+                    House h;
+                    return h;
+                }
+                void f() {
+                    int p = get_house().price;
+                }
+                """);
+        MemberAccess access = (MemberAccess) expressions(c.program(),
+                e -> e instanceof MemberAccess).getFirst();
+        assertEquals(new NamedType("int"), c.checker().expressionTypes().get(access));
+
+        FunctionCall call = (FunctionCall) expressions(c.program(),
+                e -> e instanceof FunctionCall).getFirst();
+        assertEquals(new NamedType("House"), c.checker().expressionTypes().get(call));
+    }
+
+    @Test
+    @DisplayName("Records the lax generic return type of a generic function call")
+    void testGenericFunctionCallTypeRecorded() {
+        Checked c = checked("""
+                @generic(E)
+                public Optional<E> some(E value) {
+                    return value;
+                }
+                void f() {
+                    some(5);
+                }
+                """);
+        FunctionCall call = (FunctionCall) expressions(c.program(), e -> e instanceof FunctionCall
+                && ((FunctionCall) e).callee() instanceof Identifier
+                && ((Identifier) ((FunctionCall) e).callee()).name().equals("some")).getFirst();
+        Type type = c.checker().expressionTypes().get(call);
+        // M2 is deliberately lax: the return type still mentions the unbound E.
+        assertTrue(type instanceof GenericType(String base, List<Type> args)
+                        && base.equals("Optional")
+                        && args.size() == 1
+                        && args.getFirst().equals(new NamedType("E")),
+                "expected Optional<E>, got " + type);
     }
 }

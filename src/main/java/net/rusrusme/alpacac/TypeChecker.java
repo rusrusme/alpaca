@@ -22,6 +22,13 @@ public final class TypeChecker {
     private final SymbolTable symbols;
     private final Map<Expression, Symbol> resolved;
 
+    /**
+     * Types computed for every checked expression, keyed by node identity.
+     * Purely additive side info for the monomorphizer (milestone 3); the
+     * checking behaviour itself is unchanged.
+     */
+    private final Map<Expression, Type> expressionTypes = new IdentityHashMap<>();
+
     private final Map<String, FunctionDeclaration> functions = new HashMap<>();
     private final Map<String, Map<String, FunctionDeclaration>> methods = new HashMap<>();
     private final Map<String, ConstructDecl> constructors = new HashMap<>();
@@ -38,6 +45,15 @@ public final class TypeChecker {
     public TypeChecker(SymbolTable symbols, Map<Expression, Symbol> resolved) {
         this.symbols = symbols;
         this.resolved = resolved;
+    }
+
+    /**
+     * The type computed for each checked expression (identity-keyed), including
+     * expected-type inference on construction calls of generic objects. Consumed
+     * by the monomorphizer (milestone 3) to deduce type parameter bindings.
+     */
+    public Map<Expression, Type> expressionTypes() {
+        return expressionTypes;
     }
 
     public void check(Program program) {
@@ -220,8 +236,17 @@ public final class TypeChecker {
      * argument, return value); it is only consumed by construction calls of
      * generic objects (expected-type inference, see {@link #checkCall}).
      * All other expressions ignore it.
+     * <p>
+     * Records the computed type for every checked expression in
+     * {@link #expressionTypes()} (additive side info for the monomorphizer).
      */
     private Type checkExpression(Expression expression, Type expectedType) {
+        Type type = checkExpressionInner(expression, expectedType);
+        expressionTypes.put(expression, type);
+        return type;
+    }
+
+    private Type checkExpressionInner(Expression expression, Type expectedType) {
         switch (expression) {
             case IntLiteral _ -> {
                 return new NamedType("int");

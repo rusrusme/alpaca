@@ -446,6 +446,77 @@ class LexerTests {
     }
 
     // ============================================================
+    //  Unsafe blocks (raw C read verbatim by the lexer)
+    // ============================================================
+
+    @Test
+    @DisplayName("Reads an unsafe body as one raw UNSAFE_CODE token")
+    void testUnsafeBodySingleToken() {
+        assertTokens("unsafe { scanf(\"%d\", &value); }", List.of(
+                token(UNSAFE, "unsafe"),
+                token(UNSAFE_CODE, "{ scanf(\"%d\", &value); }", " scanf(\"%d\", &value); "),
+                eof()
+        ));
+    }
+
+    @Test
+    @DisplayName("Reads C syntax that Alpaca would reject inside unsafe")
+    void testUnsafeAllowsRawCCharacters() {
+        List<Token> tokens = lexer.tokenize("""
+                unsafe {
+                    #include <stdio.h>
+                    char c = '}';
+                    int x = &y;
+                }
+                """);
+        Token body = tokens.get(1);
+        assertEquals(UNSAFE_CODE, body.type());
+        assertTrue(body.lexeme().contains("#include"));
+        assertTrue(body.lexeme().contains("'}'"));
+        assertTrue(body.lexeme().contains("&y"));
+    }
+
+    @Test
+    @DisplayName("A brace inside a string literal does not close the unsafe block")
+    void testUnsafeBraceInString() {
+        List<Token> tokens = lexer.tokenize("unsafe { printf(\"}\"); }");
+        assertEquals(3, tokens.size(), "expected UNSAFE, UNSAFE_CODE, EOF");
+        assertEquals(UNSAFE_CODE, tokens.get(1).type());
+        assertTrue(tokens.get(1).lexeme().contains("printf(\"}\")"));
+        assertEquals(EOF, tokens.get(2).type());
+    }
+
+    @Test
+    @DisplayName("Nested braces inside unsafe are balanced as one block")
+    void testUnsafeNestedBracesInLexer() {
+        List<Token> tokens = lexer.tokenize("unsafe { if (x) { y(); } }");
+        assertEquals(3, tokens.size());
+        assertEquals(UNSAFE_CODE, tokens.get(1).type());
+        assertTrue(tokens.get(1).lexeme().contains("if (x) { y(); }"));
+    }
+
+    @Test
+    @DisplayName("C comments inside unsafe are skipped, braces in them ignored")
+    void testUnsafeComments() {
+        List<Token> tokens = lexer.tokenize("""
+                unsafe { /* } */ int a; // }
+                    int b;
+                }
+                """);
+        assertEquals(3, tokens.size());
+        assertTrue(tokens.get(1).lexeme().contains("int a;"));
+        assertTrue(tokens.get(1).lexeme().contains("int b;"));
+    }
+
+    @Test
+    @DisplayName("Throws error on unterminated unsafe block")
+    void testUnterminatedUnsafeBlock() {
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class,
+                () -> lexer.tokenize("unsafe { int x;"));
+        assertTrue(e.getMessage().contains("unterminated unsafe block"));
+    }
+
+    // ============================================================
     //  Helpers
     // ============================================================
 

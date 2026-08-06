@@ -168,6 +168,48 @@ the declaration site is the only permitted write. Error messages distinguish
 fields from variables: `cannot assign to constant field 'x'` vs.
 `cannot assign to constant 'x'`.
 
+### Generics and monomorphization (milestone 3, `Monomorphizer`)
+
+`@generic` declarations are templates. The monomorphizer instantiates every
+generic function and object with the concrete type arguments used in the
+program and produces a generic-free program for the C emitter.
+
+- **check-then-monomorphize**: the monomorphizer runs after the type checker
+  and never computes expression types itself. It reads the types M2 recorded
+  (`expressionTypes()`) and applies the current substitution to them.
+- **deduction**: the type parameter binding of a call is computed by
+  structural unification of the argument types (with the enclosing
+  substitution applied) against the callee's parameter types. For generic
+  object constructions the binding comes from the call's recorded type
+  (expected-type inference, e.g. `Array<int> arr = Array(10)`), falling back
+  to the constructor arguments when no generic type context exists (e.g.
+  `Optional(5, true).is_present()`).
+- **substitution**: within an instantiation, all occurrences of the type
+  parameters are replaced by their concrete bindings - in signatures, field
+  types, local variable types and nested generic types (`Optional<E>` ->
+  `Optional<int>`).
+- **name mangling**: concrete copies are named `name$T1$T2...` (`some$int`,
+  `Array$Optional$int`). `$` cannot appear in Alpaca identifiers, so mangled
+  names cannot collide with user code; spaces in type names (`unsigned int`)
+  are replaced by underscores.
+- **demand-driven instantiation**: only declarations reachable from
+  non-generic code (function bodies, object method bodies, global
+  initializers) or from concrete generic types in declaration positions are
+  instantiated; never-used generic declarations are dropped. Instantiations
+  can pull in further instantiations (worklist fixpoint): `Array<int>` pulls
+  in `Optional$int`, `some$int` and `none$int`.
+- **concrete output**: every `GenericType` in a declaration position is
+  rendered as the `NamedType` of its clone (`Optional<int>` ->
+  `Optional$int`), so the output only references objects that exist. The
+  output is re-analyzed by fresh M1/M2 passes, which run strict because no
+  type parameters remain - this verifies the monomorphizer.
+- **limitations** (consequences of no type arguments at call sites):
+  (a) a type parameter that appears only in the return type cannot be
+  deduced (`@generic(T) T make()` called as `make()` is an error); (b) a raw
+  construction inside a generic call (`some(Array(10))`) has no concrete
+  type context and is rejected - give the construction a concrete type
+  context (typed local or helper function) instead.
+
 ---
 
 ## 5. Intentional Gaps (later milestones)
@@ -207,6 +249,13 @@ fields from variables: `cannot assign to constant field 'x'` vs.
   validated by the TypeChecker itself, including the visibility rule. Arity
   and parameter types come from declaration maps the TypeChecker collects
   from the program.
+- **Monomorphizer contract**: consumes `resolvedSymbols` and
+  `expressionTypes` (expression -> Type, populated by the `checkExpression`
+  wrapper in the TypeChecker). Call callees are resolved via the symbol
+  table - plain function callees are not recorded in `resolvedSymbols`, so
+  the monomorphizer looks them up by name. Method dispatch needs no call
+  renaming: the receiver's concretized type (`NamedType("Array$int")`)
+  makes M1/M2 resolve `arr.add(...)` to the clone's method.
 - **Duplicate detection**: `Map.putIfAbsent` returns the previous value, so
   `defineGlobal`/`defineLocal` report whether the name was already taken; the
   analyzer turns that into the error message.

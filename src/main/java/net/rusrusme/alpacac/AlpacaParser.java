@@ -412,38 +412,12 @@ public final class AlpacaParser {
 
     /**
      * Parses an unsafe statement, which is a block of raw C code enclosed in braces '{' and '}'.
+     * The lexer reads the body verbatim into a single UNSAFE_CODE token, so no
+     * token-level reconstruction is needed here.
      */
     private UnsafeStatement parseUnsafeStatement() {
-        consume(LBRACE, "expected '{' after 'unsafe'");
-        StringBuilder rawC = new StringBuilder();
-        int depth = 1;
-        Token previous = null;
-        while (depth > 0 && !isAtEnd()) {
-            Token t = peek();
-            if (t.type() == LBRACE) {
-                depth++;
-            }
-            else if (t.type() == RBRACE) {
-                depth--;
-                if (depth == 0) break; // Reached closing '}' for unsafe
-            }
-            // Reconstruct original whitespace between tokens (the lexer discards it)
-            if (previous != null) {
-                if (t.line() > previous.line()) {
-                    rawC.repeat("\n", t.line() - previous.line());
-                    rawC.repeat(" ", Math.max(0, t.column() - 1));
-                }
-                else {
-                    int gap = t.column() - (previous.column() + previous.lexeme().length());
-                    rawC.repeat(" ", Math.max(0, gap));
-                }
-            }
-            rawC.append(t.lexeme());
-            previous = t;
-            advance();
-        }
-        consume(RBRACE, "expected closing '}' for unsafe");
-        return new UnsafeStatement(rawC.toString().trim());
+        Token body = consume(UNSAFE_CODE, "expected '{' after 'unsafe'");
+        return new UnsafeStatement(((String) body.literal()).trim());
     }
 
     // --------------------------------------------------------------------------

@@ -626,6 +626,53 @@ class ParserTests {
     }
 
     @Test
+    @DisplayName("Parses raw C code that Alpaca tokens would reject")
+    void testUnsafeRawCCode() {
+        Block body = parseFunctionBody("""
+                unsafe { scanf("%d", &value); }
+                """);
+        UnsafeStatement unsafe = (UnsafeStatement) body.statements().getFirst();
+        assertEquals("scanf(\"%d\", &value);", unsafe.code());
+    }
+
+    @Test
+    @DisplayName("Preserves multi-line unsafe code verbatim")
+    void testUnsafeMultiLineCode() {
+        Block body = parseFunctionBody("""
+                unsafe {
+                    #include <stdio.h>
+                    char c = '}';
+                    scanf("%c", &c);
+                }
+                """);
+        UnsafeStatement unsafe = (UnsafeStatement) body.statements().getFirst();
+        assertTrue(unsafe.code().contains("#include <stdio.h>"));
+        assertTrue(unsafe.code().contains("char c = '}';"));
+        assertTrue(unsafe.code().contains("scanf(\"%c\", &c);"));
+    }
+
+    @Test
+    @DisplayName("A brace inside a C string does not end the unsafe block")
+    void testUnsafeBraceInsideString() {
+        Block body = parseFunctionBody("""
+                unsafe { printf("}"); }
+                int x = 1;
+                """);
+        UnsafeStatement unsafe = (UnsafeStatement) body.statements().getFirst();
+        assertEquals("printf(\"}\");", unsafe.code());
+        // The statement after the unsafe block must still parse normally.
+        assertEquals(2, body.statements().size());
+    }
+
+    @Test
+    @DisplayName("Throws error when unsafe is not followed by a brace")
+    void testUnsafeMissingBrace() {
+        AlpacaCompilerError e = assertThrows(AlpacaCompilerError.class,
+                () -> parseFunctionBody("unsafe x = 1;"));
+        assertTrue(e.getMessage().contains("'{'"));
+    }
+
+    @Test
     @DisplayName("Parses a for loop with all parts empty")
     void testForLoopEmptyParts() {
         Block body = parseFunctionBody("for : : { x = 1; }");
